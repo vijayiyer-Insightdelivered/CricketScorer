@@ -1,0 +1,13 @@
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script>
+const app=firebase.initializeApp({apiKey:"AIzaSyBJ6akMXtSXvVwPxJ-MiskL7DSCdZPyg2M",authDomain:"pitchup-7dd42.firebaseapp.com",projectId:"pitchup-7dd42"});
+const db=firebase.firestore();
+const auth=firebase.auth();
+auth.signInWithEmailAndPassword('vijay.iyer@thinkviz.com',prompt('Enter password for vijay.iyer@thinkviz.com:')).then(cred=>{
+  return db.collection('users').doc(cred.user.uid).update({role:'admin'});
+}).then(()=>{
+  document.body.innerHTML='<h2 style="color:green">Done! vijay.iyer@thinkviz.com is now Admin. Close this tab and refresh PitchUp.</h2>';
+}).catch(e=>{document.body.innerHTML='<h2 style="color:red">Error: '+e.message+'</h2>';});
+</script>
