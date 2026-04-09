@@ -473,7 +473,6 @@ function loadUserRole(user){
 function handleAuthReady(user){
   fbUid=user.uid;fbReady=true;
   syncStatus=navigator.onLine?'synced':'offline';
-  updateSyncBar();
   // Show home immediately with cached role (or default 'standard')
   const cachedRole=authUser?.uid===user.uid?authUser.role:'standard';
   authUser={uid:user.uid,email:user.email,role:cachedRole,displayName:user.displayName||authForm.name||''};
@@ -2920,16 +2919,18 @@ function updateOffline(){
 }
 function updateSyncBar(){
   const el=document.getElementById('sync-bar');if(!el)return;
+  clearTimeout(el._hideTimer);
   if(syncStatus==='synced'&&navigator.onLine){
     el.className='sync-bar synced';el.textContent='☁️ Synced to cloud';
     el.style.display='block';
-    clearTimeout(el._hideTimer);
     el._hideTimer=setTimeout(()=>{el.style.display='none';},2000);
   }else if(syncStatus==='pending'){
     el.className='sync-bar pending';el.textContent='⏳ Syncing...';el.style.display='block';
-  }else if(syncStatus==='offline'||!navigator.onLine){
+    // Auto-hide pending bar after 5s to prevent it getting stuck
+    el._hideTimer=setTimeout(()=>{el.style.display='none';},5000);
+  }else if(!navigator.onLine){
     el.className='sync-bar offline';el.textContent='📶 Offline — data saves locally';
-    el.style.display=navigator.onLine?'none':'block';
+    el.style.display='block';
   }else{el.style.display='none';}
 }
 window.addEventListener('online',()=>{updateOffline();syncMatchToFirestore(true);});
