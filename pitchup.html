@@ -747,13 +747,24 @@ function syncMatchDocToFirestore(m){
   db.collection('matches').doc(m.matchId).set(doc,{merge:true}).catch(e=>console.warn('Match sync failed:',e));
 }
 
+function syncSquadsToFirestore(){
+  if(!isSyncEnabled()||!db)return;
+  state.squads.forEach(sq=>{
+    db.collection('squads').doc(sq.id).set({
+      ...sq,
+      players:sq.players.map(p=>({id:p.id,name:p.name})),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy:fbUid
+    },{merge:true}).catch(e=>console.warn('Squad sync failed:',e));
+  });
+}
+
 function migrateLocalToFirestore(){
   if(!fbReady||!db)return;
   const migrated=localStorage.getItem('pitchup_fb_migrated');
   if(migrated)return;
-  // Migrate teams
   syncTeamsToFirestore();
-  // Migrate saved matches (add matchIds if missing)
+  syncSquadsToFirestore();
   state.savedMatches.forEach(m=>{
     if(!m.matchId)m.matchId='m_'+uid();
     syncMatchDocToFirestore(m);
@@ -792,6 +803,19 @@ function loadFromFirestore(){
     state.savedMatches=merged.slice(0,20);
     persist();render();
   }).catch(()=>{});
+  // Load squads from Firestore (merge with local)
+  db.collection('squads').get().then(snap=>{
+    const fbSquads=[];
+    snap.forEach(doc=>fbSquads.push(doc.data()));
+    const merged=[...state.squads];
+    fbSquads.forEach(fs=>{
+      const idx=merged.findIndex(s=>s.id===fs.id);
+      if(idx>=0)merged[idx]={...merged[idx],...fs};
+      else merged.push(fs);
+    });
+    state.squads=merged;
+    persist();render();
+  }).catch(()=>{});
 }
 
 // ─── Device ID (stable per browser) ──────────────────────────────────────────
@@ -810,11 +834,12 @@ const uid=()=>Math.random().toString(36).slice(2,9);
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let state={
-  screen:'home',        // home|teams|edit_team|setup|innings_setup|scoring|result
+  screen:'home',
   match:null,
   currentInnings:0,
   savedMatches:[],
   teams:[],             // [{id,name,players:[{id,name}]}]
+  squads:[],            // [{id,region,group,players:[{id,name}]}]
   modal:null,
   editTeamId:null,
 };
@@ -824,10 +849,11 @@ function loadState(){
     const d=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');
     state.savedMatches=d.matches||[];
     state.teams=d.teams||[];
+    state.squads=d.squads||[];
   }catch(e){}
 }
 function persist(){
-  try{ localStorage.setItem(STORAGE_KEY,JSON.stringify({matches:state.savedMatches,teams:state.teams})); }catch(e){}
+  try{ localStorage.setItem(STORAGE_KEY,JSON.stringify({matches:state.savedMatches,teams:state.teams,squads:state.squads})); }catch(e){}
 }
 
 // ─── State helpers ────────────────────────────────────────────────────────────
@@ -1091,6 +1117,14 @@ window.updateTeamName=updateTeamName;
 function updateTeamPlayer(idx,v){editTeamData.players[idx].name=v;}
 window.updateTeamPlayer=updateTeamPlayer;
 function addTeamPlayer(){editTeamData.players.push({id:uid(),name:''});render();}
+function addPlayerFromSquad(name){
+  // Add to first empty slot, or append
+  const emptyIdx=editTeamData.players.findIndex(p=>!p.name.trim());
+  if(emptyIdx>=0){editTeamData.players[emptyIdx].name=name;}
+  else{editTeamData.players.push({id:uid(),name});}
+  render();
+}
+window.addPlayerFromSquad=addPlayerFromSquad;
 window.addTeamPlayer=addTeamPlayer;
 function removeTeamPlayer(idx){if(editTeamData.players.length<=1)return;editTeamData.players.splice(idx,1);render();}
 window.removeTeamPlayer=removeTeamPlayer;
@@ -1261,6 +1295,8 @@ function render(){
   else if(s==='player_perf')html=renderPlayerPerformance();
   else if(s==='player_detail')html=renderPlayerDetail();
   else if(s==='edit_match')html=renderEditMatch();
+  else if(s==='squads')html=renderSquads();
+  else if(s==='edit_squad')html=renderEditSquad();
   if(state.modal)html+=renderModal(state.modal);
   document.getElementById('app').innerHTML=html;
 }
@@ -1377,6 +1413,14 @@ function renderHome(){
           </div>
           <span class="ac-arrow" style="color:#64748b;">›</span>
         </div>
+        <div class="action-card secondary" onclick="state.screen='squads';render()">
+          <div class="ac-icon white-green" style="background:#fef3c7;color:#d97706;">🏅</div>
+          <div>
+            <div class="ac-title">Master Squads</div>
+            <div class="ac-sub">Manage regions, training groups & player pools</div>
+          </div>
+          <span class="ac-arrow" style="color:#64748b;">›</span>
+        </div>
         <div class="action-card secondary" onclick="state.screen='player_perf';render()">
           <div class="ac-icon white-green" style="background:#eff6ff;color:#3b82f6;">📊</div>
           <div>
@@ -1480,10 +1524,40 @@ function renderEditTeam(){
             <button class="stepper-btn" onclick="setSquadSizeEdit(1)" style="background:#fff;border-color:#bbf7d0;color:var(--grass2);width:24px;height:24px;font-size:15px;">+</button>
           </div>
         </div>
-        <div style="font-size:11px;color:var(--home-muted);margin-bottom:12px;font-family:'Rajdhani',sans-serif;">Min 2 · Max 15</div>
+        <div style="font-size:11px;color:var(--home-muted);margin-bottom:12px;font-family:'Rajdhani',sans-serif;">Min 2 · Max 15 · Pick from squads or add manually</div>
         ${playerRows}
-        <button class="add-player-btn" onclick="addTeamPlayer()">+ Add Player</button>
+        <button class="add-player-btn" onclick="addTeamPlayer()">+ Add Player Manually</button>
       </div>
+      ${state.squads.length>0?`<div class="team-form-card">
+        <div class="team-form-title" style="color:#b45309;">🏅 Pick from Master Squad</div>
+        <div style="font-size:11px;color:var(--home-muted);margin-bottom:10px;font-family:var(--fu);">Tap players to add them to this team</div>
+        ${(()=>{
+          const regions={};
+          state.squads.forEach(sq=>{
+            const r=sq.region||'Unassigned';
+            if(!regions[r])regions[r]=[];
+            regions[r].push(sq);
+          });
+          return Object.keys(regions).sort().map(region=>{
+            return `<div style="margin-bottom:10px;">
+              <div style="font-size:10px;color:#b45309;font-family:var(--fu);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">📍 ${escHtml(region)}</div>
+              ${regions[region].map(sq=>{
+                const existingNames=editTeamData.players.map(p=>p.name.trim().toLowerCase()).filter(Boolean);
+                return `<div style="margin-bottom:8px;">
+                  <div style="font-size:11px;color:var(--home-text);font-family:var(--fu);font-weight:700;margin-bottom:4px;">${escHtml(sq.group)}</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                    ${sq.players.map(p=>{
+                      const alreadyAdded=existingNames.includes(p.name.trim().toLowerCase());
+                      const safeName=p.name.replace(/'/g,"\\'");
+                      return `<button style="padding:4px 10px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:600;cursor:pointer;border:1px solid ${alreadyAdded?'#bbf7d0':'var(--home-border)'};background:${alreadyAdded?'#f0fdf4':'#fff'};color:${alreadyAdded?'var(--grass)':'var(--home-text)'};" onclick="${alreadyAdded?'':`addPlayerFromSquad('${safeName}')`}" ${alreadyAdded?'disabled':''}>${escHtml(p.name)}${alreadyAdded?' ✓':''}</button>`;
+                    }).join('')}
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>`;
+          }).join('');
+        })()}
+      </div>`:''}
       <div class="light-nav-row">
         <button class="light-btn-secondary" onclick="state.screen='teams';state.editTeamId=null;render()">Cancel</button>
         <button class="light-btn-primary" onclick="saveTeam()">✓ Save Team</button>
@@ -2429,6 +2503,150 @@ function renderSyncSettings(){
 
       <div class="light-nav-row">
         <button class="light-btn-secondary" onclick="state.screen='home';render()">← Back</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─── MASTER SQUADS ───────────────────────────────────────────────────────────
+let editSquadData=null; // {id,region,group,players:[{id,name}]}
+
+function newSquad(){
+  editSquadData={id:uid(),region:'',group:'',players:[{id:uid(),name:''},{id:uid(),name:''},{id:uid(),name:''}]};
+  state.screen='edit_squad';render();
+}
+window.newSquad=newSquad;
+
+function editSquad(id){
+  const sq=state.squads.find(s=>s.id===id);if(!sq)return;
+  editSquadData={...sq,players:sq.players.map(p=>({...p}))};
+  state.screen='edit_squad';render();
+}
+window.editSquad=editSquad;
+
+function deleteSquad(id){
+  if(!confirm('Delete this squad?'))return;
+  state.squads=state.squads.filter(s=>s.id!==id);
+  persist();
+  if(isSyncEnabled()&&db)db.collection('squads').doc(id).delete().catch(()=>{});
+  render();
+}
+window.deleteSquad=deleteSquad;
+
+function saveSquad(){
+  if(!editSquadData)return;
+  const region=editSquadData.region.trim();
+  const group=editSquadData.group.trim();
+  if(!region){alert('Enter a region name');return;}
+  if(!group){alert('Enter a training group name');return;}
+  const players=editSquadData.players.filter(p=>p.name.trim()).map(p=>({id:p.id,name:p.name.trim()}));
+  if(players.length<1){alert('Add at least one player');return;}
+  const sq={id:editSquadData.id,region,group,players};
+  const idx=state.squads.findIndex(s=>s.id===sq.id);
+  if(idx>=0)state.squads[idx]=sq;else state.squads.push(sq);
+  persist();syncSquadsToFirestore();
+  editSquadData=null;state.screen='squads';render();
+}
+window.saveSquad=saveSquad;
+
+function updateSquadField(field,val){if(editSquadData)editSquadData[field]=val;}
+window.updateSquadField=updateSquadField;
+function updateSquadPlayer(idx,val){if(editSquadData&&editSquadData.players[idx])editSquadData.players[idx].name=val;}
+window.updateSquadPlayer=updateSquadPlayer;
+function addSquadPlayer(){if(editSquadData)editSquadData.players.push({id:uid(),name:''});render();}
+window.addSquadPlayer=addSquadPlayer;
+function removeSquadPlayer(idx){if(editSquadData&&editSquadData.players.length>1){editSquadData.players.splice(idx,1);render();}}
+window.removeSquadPlayer=removeSquadPlayer;
+
+function renderSquads(){
+  const squads=state.squads;
+  // Group by region
+  const regions={};
+  squads.forEach(sq=>{
+    const r=sq.region||'Unassigned';
+    if(!regions[r])regions[r]=[];
+    regions[r].push(sq);
+  });
+  const regionNames=Object.keys(regions).sort();
+
+  let content='';
+  if(squads.length===0){
+    content=`<div class="empty-state"><div class="empty-icon">🏅</div><div class="empty-text">No squads yet.<br>Create a master squad for your region and training groups.</div></div>`;
+  }else{
+    content=regionNames.map(region=>{
+      const groups=regions[region];
+      return `<div style="margin-bottom:16px;">
+        <div style="font-family:var(--fu);font-size:11px;font-weight:700;letter-spacing:2px;color:#b45309;text-transform:uppercase;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--home-border);">📍 ${escHtml(region)}</div>
+        ${groups.map(sq=>`
+          <div class="team-card" style="margin-bottom:6px;">
+            <div class="team-avatar" style="background:linear-gradient(135deg,#d97706,#b45309);">${escHtml(sq.group.slice(0,2).toUpperCase())}</div>
+            <div class="team-info">
+              <div class="team-name">${escHtml(sq.group)}</div>
+              <div class="team-meta">${sq.players.length} player${sq.players.length!==1?'s':''}</div>
+            </div>
+            <div class="team-actions">
+              <button class="team-action-btn" onclick="editSquad('${sq.id}')">Edit</button>
+              <button class="team-action-btn danger" onclick="deleteSquad('${sq.id}')">✕</button>
+            </div>
+          </div>`).join('')}
+      </div>`;
+    }).join('');
+  }
+
+  return `<div class="screen light active">
+    <div class="topbar light">
+      <button class="topbar-back" onclick="state.screen='home';render()" style="color:#64748b;">←</button>
+      <span class="topbar-title" style="color:#0f172a;">Master Squads</span>
+      <button onclick="newSquad()" style="background:linear-gradient(135deg,#d97706,#b45309);border:none;border-radius:9px;color:#fff;padding:7px 14px;cursor:pointer;font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.5px;">+ ADD</button>
+    </div>
+    <div class="screen-inner light">
+      <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;margin-bottom:12px;font-weight:600;">Regions & Training Groups (${squads.length})</div>
+      ${content}
+      <button class="light-btn-primary" style="margin-top:8px;background:linear-gradient(135deg,#d97706,#b45309);" onclick="newSquad()">+ Add New Squad</button>
+    </div>
+  </div>`;
+}
+
+function renderEditSquad(){
+  if(!editSquadData){state.screen='squads';return renderSquads();}
+  const d=editSquadData;
+  const isNew=!state.squads.find(s=>s.id===d.id);
+  // Region suggestions from existing squads
+  const existingRegions=[...new Set(state.squads.map(s=>s.region).filter(Boolean))];
+  const regionOpts=existingRegions.length>0?`<datalist id="region-list">${existingRegions.map(r=>`<option value="${escHtml(r)}">`).join('')}</datalist>`:'';
+
+  const playerRows=d.players.map((p,i)=>`
+    <div class="player-row">
+      <span class="player-num">${i+1}</span>
+      <input class="player-input" value="${escHtml(p.name)}" placeholder="Player ${i+1}" oninput="updateSquadPlayer(${i},this.value)"/>
+      <button class="player-del" onclick="removeSquadPlayer(${i})">✕</button>
+    </div>`).join('');
+
+  return `<div class="screen light active">
+    <div class="topbar light">
+      <button class="topbar-back" onclick="editSquadData=null;state.screen='squads';render()" style="color:#64748b;">←</button>
+      <span class="topbar-title" style="color:#0f172a;">${isNew?'New Squad':'Edit Squad'}</span>
+      <div style="width:40px;"></div>
+    </div>
+    <div class="screen-inner light">
+      <div class="team-form-card">
+        <div class="team-form-title">Squad Details</div>
+        <label class="light-label">Region</label>
+        <input class="light-input" value="${escHtml(d.region)}" placeholder="e.g. Hampshire, Surrey" oninput="updateSquadField('region',this.value)" list="region-list" style="margin-bottom:10px;"/>
+        ${regionOpts}
+        <label class="light-label">Training Group</label>
+        <input class="light-input" value="${escHtml(d.group)}" placeholder="e.g. U11 Development, U12 Pathway" oninput="updateSquadField('group',this.value)"/>
+      </div>
+      <div class="team-form-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--home-border);">
+          <div class="team-form-title" style="margin:0;padding:0;border:none;">Players (${d.players.length})</div>
+        </div>
+        ${playerRows}
+        <button class="add-player-btn" onclick="addSquadPlayer()">+ Add Player</button>
+      </div>
+      <div class="light-nav-row">
+        <button class="light-btn-secondary" onclick="editSquadData=null;state.screen='squads';render()">Cancel</button>
+        <button class="light-btn-primary" onclick="saveSquad()">✓ Save Squad</button>
       </div>
     </div>
   </div>`;
