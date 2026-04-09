@@ -1072,18 +1072,19 @@ function initSetup(teamAId,teamBId){
 window.initSetup=initSetup;
 
 // ─── Team Management ──────────────────────────────────────────────────────────
-let editTeamData={name:'',players:[{id:uid(),name:''},{id:uid(),name:''},{id:uid(),name:''}]};
+let editTeamData={name:'',players:[{id:uid(),name:''},{id:uid(),name:''},{id:uid(),name:''}],captainId:null};
 
 function saveTeam(){
   const name=editTeamData.name.trim();
   if(!name){alert('Enter a team name');return;}
   const players=editTeamData.players.filter(p=>p.name.trim()).map(p=>({id:p.id,name:p.name.trim()}));
   if(players.length<1){alert('Add at least one player');return;}
+  const captainId=editTeamData.captainId;
   if(state.editTeamId){
     const idx=state.teams.findIndex(t=>t.id===state.editTeamId);
-    if(idx>=0)state.teams[idx]={id:state.editTeamId,name,players};
+    if(idx>=0)state.teams[idx]={id:state.editTeamId,name,players,captainId};
   }else{
-    state.teams.push({id:uid(),name,players});
+    state.teams.push({id:uid(),name,players,captainId});
   }
   persist();syncTeamsToFirestore();
   state.screen='teams';state.editTeamId=null;
@@ -1104,14 +1105,14 @@ function editTeam(id){
   const t=state.teams.find(x=>x.id===id);
   if(!t)return;
   state.editTeamId=id;
-  editTeamData={name:t.name,players:t.players.map(p=>({...p}))};
+  editTeamData={name:t.name,players:t.players.map(p=>({...p})),captainId:t.captainId||null};
   state.screen='edit_team';render();
 }
 window.editTeam=editTeam;
 
 function newTeam(){
   state.editTeamId=null;
-  editTeamData={name:'',players:Array(8).fill(null).map(()=>({id:uid(),name:''}))};
+  editTeamData={name:'',players:Array(8).fill(null).map(()=>({id:uid(),name:''})),captainId:null};
   state.screen='edit_team';render();
 }
 window.newTeam=newTeam;
@@ -1121,6 +1122,8 @@ window.updateTeamName=updateTeamName;
 function updateTeamPlayer(idx,v){editTeamData.players[idx].name=v;}
 window.updateTeamPlayer=updateTeamPlayer;
 function addTeamPlayer(){editTeamData.players.push({id:uid(),name:''});render();}
+function setTeamCaptain(id){editTeamData.captainId=editTeamData.captainId===id?null:id;render();}
+window.setTeamCaptain=setTeamCaptain;
 function addPlayerFromSquad(name){
   // Add to first empty slot, or append
   const emptyIdx=editTeamData.players.findIndex(p=>!p.name.trim());
@@ -1346,7 +1349,7 @@ function renderHome(){
           <div class="team-avatar">${escHtml(t.name.slice(0,2).toUpperCase())}</div>
           <div class="team-info">
             <div class="team-name">${escHtml(t.name)}</div>
-            <div class="team-meta">${t.players.length} players registered</div>
+            <div class="team-meta">${t.players.length} players${t.captainId?(()=>{const c=t.players.find(p=>p.id===t.captainId);return c?' · © '+escHtml(c.name):'';})():''}</div>
           </div>
           <span style="color:#cbd5e1;font-size:14px;">›</span>
         </div>`).join('')}
@@ -1472,7 +1475,7 @@ function renderTeams(){
         <div class="team-avatar">${escHtml(t.name.slice(0,2).toUpperCase())}</div>
         <div class="team-info">
           <div class="team-name">${escHtml(t.name)}</div>
-          <div class="team-meta">${t.players.length} players</div>
+          <div class="team-meta">${t.players.length} players${t.captainId?(()=>{const c=t.players.find(p=>p.id===t.captainId);return c?' · © '+escHtml(c.name):'';})():''}</div>
         </div>
         <div class="team-actions">
           <button class="team-action-btn" onclick="editTeam('${t.id}')">Edit</button>
@@ -1499,12 +1502,15 @@ function renderTeams(){
 function renderEditTeam(){
   const isNew=!state.editTeamId;
   const players=editTeamData.players;
-  let playerRows=players.map((p,i)=>`
-    <div class="player-row">
+  let playerRows=players.map((p,i)=>{
+    const isCap=editTeamData.captainId===p.id;
+    return `<div class="player-row" style="align-items:center;">
       <span class="player-num">${i+1}</span>
-      <input class="player-input" value="${escHtml(p.name)}" placeholder="Player name" onchange="updateTeamPlayer(${i},this.value)" oninput="updateTeamPlayer(${i},this.value)"/>
+      <input class="player-input" value="${escHtml(p.name)}" placeholder="Player name" onchange="updateTeamPlayer(${i},this.value)" oninput="updateTeamPlayer(${i},this.value)" style="${isCap?'border-color:#d97706;background:#fffbeb;':''}"/>
+      <button onclick="setTeamCaptain('${p.id}')" title="${isCap?'Remove captain':'Set as captain'}" style="width:28px;height:28px;border-radius:50%;border:1.5px solid ${isCap?'#d97706':'var(--home-border)'};background:${isCap?'#d97706':'#fff'};color:${isCap?'#fff':'var(--home-muted)'};cursor:pointer;font-size:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">${isCap?'©':'C'}</button>
       ${players.length>1?`<button class="player-del" onclick="removeTeamPlayer(${i})">✕</button>`:'<span style="width:24px;"></span>'}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   return `<div class="screen light active">
     <div class="topbar light">
