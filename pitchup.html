@@ -915,6 +915,14 @@ function exportCSV(match){
     csv+=`BALL-BY-BALL\nOver,Ball,Bowler,Batter,Event,Runs\n`;
     inn.deliveries.forEach(d=>{ csv+=`${d.over+1},${d.ball},${d.bowler||''},${d.batter||''},${d.event},${d.runs}\n`; });
   });
+  // Player notes
+  if(match.playerNotes&&match.playerNotes.length>0){
+    csv+=`\nPLAYER NOTES\nPlayer,Category,Note,Author,Date\n`;
+    match.playerNotes.forEach(n=>{
+      const d=new Date(n.timestamp).toLocaleDateString('en-GB');
+      csv+=`${n.playerName},${n.category||'general'},"${(n.note||'').replace(/"/g,'""')}",${n.author||''},${d}\n`;
+    });
+  }
   const blob=new Blob([csv],{type:'text/csv'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=`${teamA}_vs_${teamB}.csv`;a.click();
@@ -1993,7 +2001,11 @@ function renderScoring(){
               <span class="sb-sc ${nr?'sb-warn':''}" style="font-size:18px;">${b.runs}<span style="font-size:11px;color:var(--home-muted);">(${b.balls})</span>${nr?'⚠':''}</span>
               <span style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${b.fours}×4 · ${b.sixes}×6 · SR ${sr}</span>
             </div>
-            ${i===0?'<span class="sb-edit">✎</span>':''}
+            <div style="display:flex;gap:4px;margin-top:3px;">
+              ${i===0?'<span class="sb-edit">✎</span>':''}
+              <button onclick="event.stopPropagation();addPlayerNote('${b.name.replace(/'/g,"\\'")}')" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#2563eb;font-size:9px;padding:2px 6px;cursor:pointer;font-family:var(--fu);font-weight:700;">📝</button>
+              ${(state.match?.playerNotes||[]).filter(n=>n.playerName===b.name).length>0?`<button onclick="event.stopPropagation();viewPlayerNotes('${b.name.replace(/'/g,"\\'")}')" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;color:var(--grass);font-size:9px;padding:2px 6px;cursor:pointer;font-family:var(--fu);font-weight:700;">${(state.match?.playerNotes||[]).filter(n=>n.playerName===b.name).length} notes</button>`:''}
+            </div>
           </div>`;
         }).join('')}
       </div>
@@ -2115,6 +2127,8 @@ function renderModal(modal){
   else if(modal.type==='retireBowler')inner=renderRetireBowlerModal();
   else if(modal.type==='replaceBowler')inner=renderReplaceBowlerModal(modal.data);
   else if(modal.type==='nextbowler')inner=renderNextBowlerModal();
+  else if(modal.type==='playernote')inner=renderPlayerNoteModal(modal.data);
+  else if(modal.type==='viewnotes')inner=renderViewNotesModal(modal.data);
   const noClose=modal.type==='newbatter'||modal.type==='nextbowler';
   return `<div class="modal-overlay" onclick="if(event.target===this&&!${noClose})closeModal()">${inner}</div>`;
 }
@@ -2238,6 +2252,104 @@ function renderReplaceBowlerModal(data){
     <div class="modal-sub">Who takes the ${data.slot===0?'active':'waiting'} bowling slot?</div>
     ${items}
     <button class="modal-cancel" onclick="closeModal()">Close</button>
+  </div>`;
+}
+
+// ─── Player Notes ────────────────────────────────────────────────────────────
+let noteFormText='';
+
+function addPlayerNote(playerName){
+  noteFormText='';
+  openModal('playernote',{playerName});
+}
+window.addPlayerNote=addPlayerNote;
+
+function savePlayerNote(){
+  const m=state.match;if(!m)return;
+  const data=state.modal?.data;if(!data)return;
+  const text=noteFormText.trim();if(!text)return;
+  if(!m.playerNotes)m.playerNotes=[];
+  m.playerNotes.push({
+    playerName:data.playerName,
+    note:text,
+    timestamp:new Date().toISOString(),
+    author:authUser?.displayName||authUser?.email||'',
+    category:document.getElementById('note-category')?.value||'general'
+  });
+  noteFormText='';
+  persist();closeModal();
+}
+window.savePlayerNote=savePlayerNote;
+
+function deletePlayerNote(idx){
+  if(!state.match?.playerNotes)return;
+  state.match.playerNotes.splice(idx,1);
+  persist();render();
+}
+window.deletePlayerNote=deletePlayerNote;
+
+function viewPlayerNotes(playerName){
+  openModal('viewnotes',{playerName});
+}
+window.viewPlayerNotes=viewPlayerNotes;
+
+function renderPlayerNoteModal(data){
+  const categories=[
+    {val:'appreciation',label:'👏 Appreciation',color:'#16a34a'},
+    {val:'improvement',label:'📈 Improvement',color:'#2563eb'},
+    {val:'technique',label:'🎯 Technique',color:'#7c3aed'},
+    {val:'attitude',label:'💪 Attitude',color:'#d97706'},
+    {val:'general',label:'📝 General',color:'var(--home-muted)'},
+  ];
+  return `<div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📝 Note for ${escHtml(data.playerName)}</div>
+    <div class="modal-sub">Add a coaching note — visible in player performance</div>
+    <div style="margin-bottom:10px;">
+      <label style="font-size:11px;color:var(--home-muted);font-family:var(--fu);font-weight:700;display:block;margin-bottom:4px;">Category</label>
+      <select id="note-category" style="width:100%;padding:9px;border:1px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fu);color:var(--home-text);background:#fff;">
+        ${categories.map(c=>`<option value="${c.val}">${c.label}</option>`).join('')}
+      </select>
+    </div>
+    <textarea id="note-text" placeholder="e.g. Great cover drive today, needs to work on footwork against spin..."
+      style="width:100%;height:80px;padding:10px;border:1px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);color:var(--home-text);resize:vertical;background:#fff;"
+      oninput="noteFormText=this.value">${escHtml(noteFormText)}</textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn-primary" style="flex:1;" onclick="savePlayerNote()">Save Note</button>
+      <button class="modal-cancel" style="flex:none;width:auto;margin:0;" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function renderViewNotesModal(data){
+  const m=state.match;
+  const notes=(m?.playerNotes||[]).filter(n=>n.playerName===data.playerName);
+  const catColors={appreciation:'#16a34a',improvement:'#2563eb',technique:'#7c3aed',attitude:'#d97706',general:'var(--home-muted)'};
+  const catIcons={appreciation:'👏',improvement:'📈',technique:'🎯',attitude:'💪',general:'📝'};
+  return `<div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📝 Notes — ${escHtml(data.playerName)}</div>
+    ${notes.length===0?'<div style="color:var(--home-muted);font-size:13px;margin-bottom:12px;">No notes yet for this player.</div>':''}
+    <div style="max-height:300px;overflow-y:auto;">
+      ${notes.map((n,idx)=>{
+        const d=new Date(n.timestamp).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+        const col=catColors[n.category]||'var(--home-muted)';
+        const icon=catIcons[n.category]||'📝';
+        return `<div style="background:#fff;border:1px solid var(--home-border);border-radius:10px;padding:10px;margin-bottom:8px;border-left:3px solid ${col};">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <span style="font-size:10px;color:${col};font-family:var(--fu);font-weight:700;">${icon} ${(n.category||'general').toUpperCase()}</span>
+            <span style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">${d}</span>
+          </div>
+          <div style="font-size:12px;color:var(--home-text);font-family:var(--fb);line-height:1.5;">${escHtml(n.note)}</div>
+          ${n.author?`<div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);margin-top:4px;">— ${escHtml(n.author)}</div>`:''}
+          ${isAdmin()?`<button onclick="deletePlayerNote(${(m.playerNotes||[]).indexOf(n)})" style="background:none;border:none;color:#dc2626;font-size:10px;cursor:pointer;margin-top:4px;font-family:var(--fu);">Delete</button>`:''}
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn-primary" style="flex:1;" onclick="closeModal();addPlayerNote('${data.playerName.replace(/'/g,"\\'")}')">+ Add Note</button>
+      <button class="modal-cancel" style="flex:none;width:auto;margin:0;" onclick="closeModal()">Close</button>
+    </div>
   </div>`;
 }
 
@@ -2851,7 +2963,7 @@ function getPlayerMatchHistory(playerName){
   state.savedMatches.forEach(m=>{
     if(!m.innings)return;
     const bpo=(m.rules||DEFAULT_RULES).ballsPerOver||6;
-    const entry={date:m.date,teamA:m.teamA,teamB:m.teamB,matchId:m.matchId,bat:null,bowl:null};
+    const entry={date:m.date,teamA:m.teamA,teamB:m.teamB,matchId:m.matchId,bat:null,bowl:null,notes:[]};
     m.innings.forEach(inn=>{
       if(!inn)return;
       const b=inn.batters.find(x=>x.name===playerName);
@@ -2859,7 +2971,8 @@ function getPlayerMatchHistory(playerName){
       const bw=inn.bowlers.find(x=>x.name===playerName);
       if(bw&&bw.balls>0)entry.bowl={overs:overStr(bw.balls,bpo),runs:bw.runs,wickets:bw.wickets,wides:bw.wides||0,noBalls:bw.noBalls||0,econ:bw.balls>0?(bw.runs/(bw.balls/bpo)).toFixed(1):'-'};
     });
-    if(entry.bat||entry.bowl)history.push(entry);
+    entry.notes=(m.playerNotes||[]).filter(n=>n.playerName===playerName);
+    if(entry.bat||entry.bowl||entry.notes.length>0)history.push(entry);
   });
   return history.sort((a,b)=>new Date(b.date)-new Date(a.date));
 }
@@ -2986,7 +3099,7 @@ function renderPlayerDetail(){
         <div style="font-family:var(--fu);font-size:12px;font-weight:700;color:var(--home-text);">${escHtml(h.teamA)} vs ${escHtml(h.teamB)}</div>
         <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${d}</div>
       </div>
-      <div style="display:flex;gap:16px;">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
         ${h.bat?`<div style="font-size:11px;font-family:var(--fu);color:var(--home-text);">
           🏏 <strong>${h.bat.runs}</strong>(${h.bat.balls}) · ${h.bat.fours}×4 ${h.bat.sixes}×6 · SR ${h.bat.sr}
           <span style="color:var(--home-muted);">· ${h.bat.out?h.bat.dismissal||'out':'not out'}</span>
@@ -2995,6 +3108,16 @@ function renderPlayerDetail(){
           🎳 <strong>${h.bowl.wickets}/${h.bowl.runs}</strong> (${h.bowl.overs}) · Econ ${h.bowl.econ}
         </div>`:''}
       </div>
+      ${h.notes.length>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--home-border);">
+        ${h.notes.map(n=>{
+          const catColors={appreciation:'#16a34a',improvement:'#2563eb',technique:'#7c3aed',attitude:'#d97706',general:'var(--home-muted)'};
+          const catIcons={appreciation:'👏',improvement:'📈',technique:'🎯',attitude:'💪',general:'📝'};
+          return `<div style="font-size:10px;color:var(--home-text);font-family:var(--fb);margin-bottom:3px;">
+            <span style="color:${catColors[n.category]||'var(--home-muted)'};font-weight:700;">${catIcons[n.category]||'📝'}</span> ${escHtml(n.note)}
+            ${n.author?`<span style="color:var(--home-muted);font-size:9px;">— ${escHtml(n.author)}</span>`:''}
+          </div>`;
+        }).join('')}
+      </div>`:''}
     </div>`;
   }).join('');
 
@@ -3204,6 +3327,42 @@ function renderResult(){
       </div>
       ${renderScorecard(i1,m.teamA,bpo)}
       ${renderScorecard(i2,m.teamB,bpo)}
+
+      <!-- Player Notes Section -->
+      <div class="team-form-card" style="margin-bottom:12px;">
+        <div class="team-form-title" style="color:#2563eb;">📝 Player Notes</div>
+        <div style="font-size:11px;color:var(--home-muted);margin-bottom:10px;font-family:var(--fu);">Add coaching notes for appreciation, improvement areas, or technique observations</div>
+        ${[{team:m.teamA,players:m.playersA},{team:m.teamB,players:m.playersB}].map(({team,players})=>`
+          <div style="margin-bottom:8px;">
+            <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">${escHtml(team)}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;">
+              ${(players||[]).map(name=>{
+                const notes=(m.playerNotes||[]).filter(n=>n.playerName===name);
+                const safeName=name.replace(/'/g,"\\'");
+                return `<button onclick="addPlayerNote('${safeName}')" style="display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:600;cursor:pointer;border:1px solid ${notes.length?'#bbf7d0':'var(--home-border)'};background:${notes.length?'#f0fdf4':'#fff'};color:var(--home-text);">
+                  ${escHtml(name)}${notes.length?` <span style="color:var(--grass);font-size:9px;">(${notes.length})</span>`:''}
+                </button>`;
+              }).join('')}
+            </div>
+          </div>`).join('')}
+        ${(m.playerNotes||[]).length>0?`
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--home-border);">
+            <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);font-weight:700;letter-spacing:1px;margin-bottom:6px;">ALL NOTES (${m.playerNotes.length})</div>
+            ${m.playerNotes.map((n,idx)=>{
+              const d=new Date(n.timestamp).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+              const catColors={appreciation:'#16a34a',improvement:'#2563eb',technique:'#7c3aed',attitude:'#d97706',general:'var(--home-muted)'};
+              const catIcons={appreciation:'👏',improvement:'📈',technique:'🎯',attitude:'💪',general:'📝'};
+              return `<div style="background:#fff;border:1px solid var(--home-border);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid ${catColors[n.category]||'var(--home-muted)'};">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-family:var(--fu);font-weight:700;font-size:12px;color:var(--home-text);">${escHtml(n.playerName)}</span>
+                  <span style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">${catIcons[n.category]||'📝'} ${d}</span>
+                </div>
+                <div style="font-size:11px;color:var(--home-text);font-family:var(--fb);margin-top:3px;">${escHtml(n.note)}</div>
+              </div>`;
+            }).join('')}
+          </div>`:''}
+      </div>
+
       <div class="nav-row">
         <button class="btn-secondary" onclick="state.screen='home';state.match=null;state.currentInnings=0;render()">🏠 Home</button>
         <button class="btn-primary" onclick="exportCSV(state.match)">📥 Export CSV</button>
