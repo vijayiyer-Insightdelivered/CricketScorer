@@ -477,19 +477,20 @@ function loadUserRole(user){
 function handleAuthReady(user){
   fbUid=user.uid;fbReady=true;
   syncStatus=navigator.onLine?'synced':'offline';
-  // Show home immediately with cached role (or default 'standard')
-  const cachedRole=authUser?.uid===user.uid?authUser.role:'standard';
-  authUser={uid:user.uid,email:user.email,role:cachedRole,displayName:user.displayName||authForm.name||''};
+  // Determine role immediately — check hardcoded admin list first
+  const isHardAdmin=user.email&&ADMIN_EMAILS.includes(user.email.toLowerCase());
+  const immediateRole=isHardAdmin?'admin':(authUser?.uid===user.uid?authUser.role:'standard');
+  authUser={uid:user.uid,email:user.email,role:immediateRole,displayName:user.displayName||authForm.name||''};
   saveAuthCache();
   if(state.screen==='login')state.screen='home';
   render();
-  // Then refresh role from Firestore in background (non-blocking)
-  loadUserRole(user).then(role=>{
-    if(role!==authUser.role){
-      authUser.role=role;saveAuthCache();render();
-    }
-    saveUserToFirestore(user,role);
-  });
+  // Also refresh from Firestore in background (for non-hardcoded users)
+  if(!isHardAdmin){
+    loadUserRole(user).then(role=>{
+      if(role!==authUser.role){authUser.role=role;saveAuthCache();render();}
+    }).catch(()=>{});
+  }
+  try{saveUserToFirestore(user,authUser.role);}catch(e){}
   migrateLocalToFirestore();
   loadFromFirestore();
 }
