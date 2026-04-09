@@ -462,7 +462,11 @@ function saveUserToFirestore(user,role){
   },{merge:true}).catch(()=>{});
 }
 
+const ADMIN_EMAILS=['vijay.iyer@thinkviz.com'];
+
 function loadUserRole(user){
+  // Hardcoded admin emails always get admin role
+  if(user.email&&ADMIN_EMAILS.includes(user.email.toLowerCase()))return Promise.resolve('admin');
   if(!db)return Promise.resolve('standard');
   return db.collection('users').doc(user.uid).get().then(doc=>{
     if(doc.exists)return doc.data().role||'standard';
@@ -540,11 +544,10 @@ function doResetPassword(){
 window.doResetPassword=doResetPassword;
 
 function doLogout(){
-  fbAuth.signOut().then(()=>{
-    clearAuthCache();fbReady=false;fbUid=null;
-    authForm={email:'',password:'',name:'',error:'',success:''};
-    authScreen='login';state.screen='login';render();
-  });
+  clearAuthCache();fbReady=false;fbUid=null;
+  authForm={email:'',password:'',name:'',error:'',success:''};
+  authScreen='login';state.screen='login';render();
+  try{if(fbAuth)fbAuth.signOut().catch(()=>{});}catch(e){}
 }
 window.doLogout=doLogout;
 
