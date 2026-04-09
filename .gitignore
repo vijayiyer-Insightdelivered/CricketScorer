@@ -1,0 +1,15 @@
+# PitchUp — ThinkViz Limited
+# .gitignore
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor folders
+.vscode\settings.json
+.idea\
+
+# Temp / logs
+*.log
+*.tmp
