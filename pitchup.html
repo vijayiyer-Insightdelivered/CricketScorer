@@ -3538,7 +3538,8 @@ function renderViewer(){
       </div>
     </div>`;
   }
-  const m=viewerMatch;
+  // Strip any sensitive fields from the viewer copy (notes are admin/coach only)
+  const m={...viewerMatch};delete m.playerNotes;
   const innIdx=m.innings&&m.innings[1]?(m.innings[1].complete?1:1):0;
   const inn=m.innings?.[innIdx];
   const bpo=(m.rules||DEFAULT_RULES).ballsPerOver||6;
