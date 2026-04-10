@@ -902,14 +902,19 @@ let _squadsUnsub=null;
 
 function reloadSquads(){
   if(!db){alert('Not connected to cloud');return;}
-  db.collection('squads').get().then(snap=>{
+  // Force from server (bypass local cache) so we know what's actually in Firestore
+  db.collection('squads').get({source:'server'}).then(snap=>{
     const fbSquads=[];
     snap.forEach(doc=>fbSquads.push(doc.data()));
     state.squads=fbSquads;
     persist();render();
-    alert('Loaded '+fbSquads.length+' squad'+(fbSquads.length!==1?'s':'')+' from cloud');
+    alert('Server has '+fbSquads.length+' squad'+(fbSquads.length!==1?'s':'')+' (forced refresh from cloud)');
   }).catch(e=>{
-    alert('Failed to load squads: '+e.message);
+    alert('Failed to load from server: '+e.message+'\n\nFalling back to cached version.');
+    db.collection('squads').get().then(snap=>{
+      const fbSquads=[];snap.forEach(doc=>fbSquads.push(doc.data()));
+      state.squads=fbSquads;persist();render();
+    });
   });
 }
 window.reloadSquads=reloadSquads;
