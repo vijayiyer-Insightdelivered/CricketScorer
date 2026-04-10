@@ -812,14 +812,18 @@ function syncMatchDocToFirestore(m){
 }
 
 function syncSquadsToFirestore(){
-  if(!isSyncEnabled()||!db)return;
+  if(!isSyncEnabled()||!db){console.warn('Squad sync skipped: sync disabled or no db');return;}
   state.squads.forEach(sq=>{
     db.collection('squads').doc(sq.id).set({
-      ...sq,
-      players:sq.players.map(p=>({id:p.id,name:p.name})),
+      id:sq.id,
+      region:sq.region||'',
+      group:sq.group||'',
+      players:sq.players.map(p=>({id:p.id,name:p.name,skills:p.skills||[]})),
       updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy:fbUid
-    },{merge:true}).catch(e=>console.warn('Squad sync failed:',e));
+    },{merge:true}).then(()=>{
+      console.log('Squad synced:',sq.id,sq.region,sq.group);
+    }).catch(e=>console.warn('Squad sync failed:',sq.id,e.message));
   });
 }
 
@@ -874,10 +878,13 @@ function loadFromFirestore(){
     state.activeMatches=fbActive;
     render();
   }).catch(()=>{});
-  // Load squads from Firestore (merge with local)
-  db.collection('squads').get().then(snap=>{
+  // Load squads via live listener (auto-updates when other coaches add/edit)
+  if(_squadsUnsub){_squadsUnsub();}
+  _squadsUnsub=db.collection('squads').onSnapshot(snap=>{
     const fbSquads=[];
     snap.forEach(doc=>fbSquads.push(doc.data()));
+    console.log('Squads loaded from Firestore:',fbSquads.length);
+    // Merge: Firestore is source of truth for synced squads
     const merged=[...state.squads];
     fbSquads.forEach(fs=>{
       const idx=merged.findIndex(s=>s.id===fs.id);
@@ -886,8 +893,26 @@ function loadFromFirestore(){
     });
     state.squads=merged;
     persist();render();
-  }).catch(()=>{});
+  },err=>{
+    console.error('Squad listener error:',err.message);
+  });
 }
+
+let _squadsUnsub=null;
+
+function reloadSquads(){
+  if(!db){alert('Not connected to cloud');return;}
+  db.collection('squads').get().then(snap=>{
+    const fbSquads=[];
+    snap.forEach(doc=>fbSquads.push(doc.data()));
+    state.squads=fbSquads;
+    persist();render();
+    alert('Loaded '+fbSquads.length+' squad'+(fbSquads.length!==1?'s':'')+' from cloud');
+  }).catch(e=>{
+    alert('Failed to load squads: '+e.message);
+  });
+}
+window.reloadSquads=reloadSquads;
 
 // ─── Device ID (stable per browser) ──────────────────────────────────────────
 function getDeviceId(){
@@ -3422,7 +3447,10 @@ function renderSquads(){
       <button onclick="newSquad()" style="background:linear-gradient(135deg,#d97706,#b45309);border:none;border-radius:9px;color:#fff;padding:7px 14px;cursor:pointer;font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.5px;">+ ADD</button>
     </div>
     <div class="screen-inner light">
-      <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;margin-bottom:12px;font-weight:600;">Regions & Training Groups (${squads.length})</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;font-weight:600;">Regions & Training Groups (${squads.length})</div>
+        <button onclick="reloadSquads()" style="background:none;border:none;color:var(--grass2);font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+      </div>
       ${content}
       <button class="light-btn-primary" style="margin-top:8px;background:linear-gradient(135deg,#d97706,#b45309);" onclick="newSquad()">+ Add New Squad</button>
     </div>
