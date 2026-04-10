@@ -615,6 +615,48 @@ function renderLoginScreen(){
 
 let _firebaseInitDone=false;
 
+// ─── Viewer Mode (read-only spectator) ───────────────────────────────────────
+let viewerMode=false;
+let viewerMatchId=null;
+let viewerMatch=null;
+let viewerError='';
+let _viewerUnsub=null;
+
+function detectViewerMode(){
+  try{
+    const params=new URLSearchParams(window.location.search);
+    const viewId=params.get('view');
+    if(viewId){
+      viewerMode=true;
+      viewerMatchId=viewId;
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+function startViewerListener(){
+  if(!db||!viewerMatchId)return;
+  // Sign in anonymously to satisfy Firestore rules
+  fbAuth.signInAnonymously().catch(e=>{
+    viewerError='Could not connect to live match. Anonymous auth may be disabled.';
+    render();
+  });
+  // Subscribe to live match updates
+  _viewerUnsub=db.collection('matches').doc(viewerMatchId).onSnapshot(doc=>{
+    if(doc.exists){
+      viewerMatch=doc.data();
+      viewerError='';
+    }else{
+      viewerError='Match not found. Check the link or QR code.';
+    }
+    render();
+  },err=>{
+    viewerError='Could not load match: '+err.message;
+    render();
+  });
+}
+
 function initFirebase(){
   try{
     fb=firebase.initializeApp(firebaseConfig);
@@ -623,14 +665,19 @@ function initFirebase(){
     db.enablePersistence({synchronizeTabs:true}).catch(e=>{
       console.warn('Firestore persistence unavailable:',e.code);
     });
+    if(viewerMode){
+      _firebaseInitDone=true;
+      state.screen='viewer';
+      startViewerListener();
+      render();
+      return;
+    }
     // Listen for auth state changes
     fbAuth.onAuthStateChanged(user=>{
       _firebaseInitDone=true;
       if(user&&user.email){
-        // Signed in with email/password
         handleAuthReady(user);
       }else{
-        // Not logged in or anonymous — clear cache and show login
         clearAuthCache();
         fbReady=false;fbUid=null;
         state.screen='login';render();
@@ -639,7 +686,6 @@ function initFirebase(){
   }catch(e){
     console.warn('Firebase init failed, using offline mode:',e);
     _firebaseInitDone=true;
-    // Allow offline usage with cached auth
     if(authUser){state.screen='home';}else{state.screen='login';}
     render();
   }
@@ -1289,6 +1335,10 @@ window.toggleScorecard=()=>{showScorecard=!showScorecard;render();};
 function render(){
   const s=state.screen;
   let html='';
+  if(viewerMode){
+    document.getElementById('app').innerHTML=renderViewer();
+    return;
+  }
   if(!_firebaseInitDone&&!isLoggedIn()){
     // Show loading while Firebase initializes
     html=`<div class="screen light active"><div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;flex-direction:column;">
@@ -2092,6 +2142,7 @@ function renderScoring(){
     <div class="topbar dark">
       <span style="font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;color:var(--grass3);">${escHtml(batTeam)} vs ${escHtml(bowlTeam)}</span>
       <div class="topbar-actions">
+        <button class="tbtn dark" onclick="openShareModal()">📡 Share</button>
         <button class="tbtn dark" onclick="toggleScorecard()">${showScorecard?'▶ Score':'📋 Card'}</button>
         <button class="tbtn gold" onclick="exportCSV(state.match)">📥</button>
       </div>
@@ -2129,6 +2180,7 @@ function renderModal(modal){
   else if(modal.type==='nextbowler')inner=renderNextBowlerModal();
   else if(modal.type==='playernote')inner=renderPlayerNoteModal(modal.data);
   else if(modal.type==='viewnotes')inner=renderViewNotesModal(modal.data);
+  else if(modal.type==='share')inner=renderShareModal();
   const noClose=modal.type==='newbatter'||modal.type==='nextbowler';
   return `<div class="modal-overlay" onclick="if(event.target===this&&!${noClose})closeModal()">${inner}</div>`;
 }
@@ -2352,6 +2404,58 @@ function renderViewNotesModal(data){
     </div>
   </div>`;
 }
+
+// ─── Share Live Match (QR code for parents) ─────────────────────────────────
+function openShareModal(){
+  if(!state.match?.matchId){alert('Save match first');return;}
+  // Force a sync so viewers can see the latest state
+  syncMatchToFirestore(true);
+  openModal('share',{});
+}
+window.openShareModal=openShareModal;
+
+function renderShareModal(){
+  const matchId=state.match?.matchId;
+  if(!matchId)return '<div class="modal-sheet"><div class="modal-handle"></div><div class="modal-title">No active match</div></div>';
+  const baseUrl=window.location.origin+window.location.pathname;
+  const viewerUrl=baseUrl+'?view='+matchId;
+  const qrUrl='https://api.qrserver.com/v1/create-qr-code/?size=240x240&data='+encodeURIComponent(viewerUrl);
+  const m=state.match;
+  return `<div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📡 Share Live Match</div>
+    <div class="modal-sub">Parents and spectators can scan this QR or open the link to watch live</div>
+    <div style="background:#fff;padding:14px;border-radius:14px;text-align:center;margin-bottom:12px;border:1px solid var(--home-border);">
+      <img src="${qrUrl}" alt="QR Code" style="width:100%;max-width:240px;height:auto;display:block;margin:0 auto;"/>
+      <div style="font-family:var(--fu);font-size:11px;font-weight:700;color:var(--home-text);margin-top:8px;">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
+      <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">Live Scorecard</div>
+    </div>
+    <div style="background:#f8fafc;border:1px solid var(--home-border);border-radius:9px;padding:8px 10px;margin-bottom:10px;font-size:10px;font-family:monospace;color:var(--home-text);word-break:break-all;">${escHtml(viewerUrl)}</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <button class="btn-primary" style="flex:1;" onclick="copyShareUrl('${viewerUrl.replace(/'/g,"\\'")}')">📋 Copy Link</button>
+      ${navigator.share?`<button class="btn-primary" style="flex:1;background:#2563eb;" onclick="nativeShare('${viewerUrl.replace(/'/g,"\\'")}','${escHtml(m.teamA)} vs ${escHtml(m.teamB)}')">📤 Share</button>`:''}
+    </div>
+    <button class="modal-cancel" onclick="closeModal()">Close</button>
+  </div>`;
+}
+
+function copyShareUrl(url){
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(url).then(()=>alert('Link copied!')).catch(()=>{
+      prompt('Copy this link:',url);
+    });
+  }else{
+    prompt('Copy this link:',url);
+  }
+}
+window.copyShareUrl=copyShareUrl;
+
+function nativeShare(url,title){
+  if(navigator.share){
+    navigator.share({title:'PitchUp Live: '+title,text:'Watch '+title+' live on PitchUp',url}).catch(()=>{});
+  }
+}
+window.nativeShare=nativeShare;
 
 // ─── Next Bowler Modal (end of over / pair) ──────────────────────────────────
 let nextBowlerSelection={slot0:null,slot1:null};
@@ -3414,7 +3518,158 @@ self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>
   }catch(e){}
 }
 
+// ─── VIEWER MODE — read-only live scoreboard ────────────────────────────────
+function renderViewer(){
+  if(viewerError){
+    return `<div class="screen light active">
+      <div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;">
+        <div style="font-size:48px;margin-bottom:12px;">📡</div>
+        <div style="font-family:var(--fd);font-size:18px;color:var(--home-text);text-align:center;">${escHtml(viewerError)}</div>
+        <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:8px;text-align:center;">PitchUp Live Viewer</div>
+      </div>
+    </div>`;
+  }
+  if(!viewerMatch){
+    return `<div class="screen light active">
+      <div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;flex-direction:column;">
+        <div style="font-size:32px;margin-bottom:12px;">🏏</div>
+        <div style="font-family:var(--fd);font-size:20px;color:var(--home-text);">PITCH<em style="color:var(--grass2);font-style:normal;">UP</em></div>
+        <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:6px;">Loading live match...</div>
+      </div>
+    </div>`;
+  }
+  const m=viewerMatch;
+  const innIdx=m.innings&&m.innings[1]?(m.innings[1].complete?1:1):0;
+  const inn=m.innings?.[innIdx];
+  const bpo=(m.rules||DEFAULT_RULES).ballsPerOver||6;
+  const charlie=(m.bowlingMode||'charlie')==='charlie';
+  const batTeam=innIdx===0?m.teamA:m.teamB;
+  const bowlTeam=innIdx===0?m.teamB:m.teamA;
+  const target=innIdx===1&&m.innings[0]?m.innings[0].total+1:null;
+  const runsNeeded=target&&inn?target-(inn.total||0):null;
+  const ballsLeft=inn?(m.totalOvers*bpo)-inn.legalBalls:0;
+  const matchComplete=m.complete;
+
+  const i1=m.innings?.[0];
+  const i2=m.innings?.[1];
+
+  function batCard(b,role,roleColor){
+    const sr=b.balls>0?((b.runs/b.balls)*100).toFixed(0):'-';
+    return `<div style="background:#fff;border:1.5px solid var(--home-border);border-radius:12px;padding:10px 12px;flex:1;min-width:140px;">
+      <div style="font-size:9px;color:${roleColor};font-family:var(--fu);font-weight:700;letter-spacing:1.5px;">${role}</div>
+      <div style="font-family:var(--fu);font-size:14px;font-weight:700;color:var(--home-text);margin:2px 0;">${escHtml(b.name)}</div>
+      <div style="display:flex;gap:8px;align-items:baseline;">
+        <span style="font-family:var(--fd);font-size:22px;font-weight:700;color:var(--home-text);">${b.runs}</span>
+        <span style="font-size:11px;color:var(--home-muted);">(${b.balls})</span>
+      </div>
+      <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${b.fours}×4 · ${b.sixes}×6 · SR ${sr}</div>
+    </div>`;
+  }
+
+  function bowlCard(bw,label,color){
+    if(!bw)return '';
+    const econ=bw.balls>0?(bw.runs/(bw.balls/bpo)).toFixed(1):'-';
+    return `<div style="background:#fff;border:1.5px solid var(--home-border);border-radius:12px;padding:10px 12px;flex:1;min-width:140px;">
+      <div style="font-size:9px;color:${color};font-family:var(--fu);font-weight:700;letter-spacing:1.5px;">${label}</div>
+      <div style="font-family:var(--fu);font-size:14px;font-weight:700;color:var(--home-text);margin:2px 0;">${escHtml(bw.name)}</div>
+      <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);">${overStr(bw.balls,bpo)}ov · ${bw.runs}r · ${bw.wickets}w</div>
+      <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">Econ ${econ}</div>
+    </div>`;
+  }
+
+  const activeBatters=inn?inn.currentBatters.map(id=>inn.batters.find(b=>b.id===id)).filter(Boolean):[];
+  const activeBowler=inn&&inn.charlieBowlers[0]?inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]):null;
+  const waitingBowler=inn&&inn.charlieBowlers[1]?inn.bowlers.find(b=>b.id===inn.charlieBowlers[1]):null;
+
+  const overBalls=inn?inn.deliveries.slice(-12).map(d=>{
+    let cls='ob-run',lbl=d.runs;
+    if(d.isWicket){cls='ob-wkt';lbl='W';}
+    else if(d.runs===6)cls='ob-six';
+    else if(d.runs===4)cls='ob-four';
+    else if(d.isExtra){cls='ob-ext';lbl=d.extraType?.[0]||'E';}
+    return `<div class="ob ${cls}">${lbl}</div>`;
+  }).join(''):'';
+
+  // Result line if match complete
+  let resultLine='';
+  if(matchComplete&&i1&&i2){
+    const s1=i1.total||0,s2=i2.total||0;
+    const winner=s1>s2?m.teamA:s2>s1?m.teamB:'Tie';
+    const margin=winner===m.teamA?`by ${s1-s2} runs`:winner===m.teamB?`by ${(m.playersB?.length||11)-1-(i2?.wickets||0)} wickets`:'';
+    resultLine=`<div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:2px solid #fde68a;border-radius:14px;padding:14px;text-align:center;margin-bottom:14px;">
+      <div style="font-size:10px;color:#b45309;font-family:var(--fu);font-weight:700;letter-spacing:2px;">🏆 MATCH RESULT</div>
+      <div style="font-family:var(--fd);font-size:24px;font-weight:700;color:var(--home-text);margin:4px 0;">${winner==='Tie'?'TIE!':escHtml(winner)+' WIN!'}</div>
+      ${margin?`<div style="font-size:13px;color:#b45309;font-family:var(--fu);">${margin}</div>`:''}
+    </div>`;
+  }
+
+  // Both innings score boxes
+  const scoresRow=`<div style="display:flex;gap:8px;margin-bottom:14px;">
+    ${[{t:m.teamA,i:i1},{t:m.teamB,i:i2}].map(({t,i})=>`
+      <div style="flex:1;background:${i&&!i.complete&&!matchComplete?'#f0fdf4':'#fff'};border:1.5px solid ${i&&!i.complete&&!matchComplete?'#bbf7d0':'var(--home-border)'};border-radius:12px;padding:12px;text-align:center;">
+        <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);font-weight:700;letter-spacing:1px;">${escHtml(t)}</div>
+        <div style="font-family:var(--fd);font-size:28px;font-weight:700;color:var(--home-text);">${i?(i.total+'/'+i.wickets):'—'}</div>
+        <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);">${i?overStr(i.legalBalls,bpo)+' ov':''}</div>
+        ${i&&!i.complete&&!matchComplete?'<div style="font-size:9px;color:var(--grass);font-family:var(--fu);font-weight:700;margin-top:2px;">● LIVE</div>':''}
+      </div>`).join('')}
+  </div>`;
+
+  return `<div class="screen light active">
+    <div class="topbar light" style="justify-content:center;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:8px;height:8px;border-radius:50%;background:#dc2626;animation:pulse 2s infinite;"></div>
+        <span style="font-family:var(--fd);font-size:14px;font-weight:700;color:var(--home-text);letter-spacing:1px;">LIVE · ${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</span>
+      </div>
+    </div>
+    <style>@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}</style>
+    <div class="screen-inner light">
+      ${resultLine}
+      ${scoresRow}
+
+      ${target&&!matchComplete?`<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px;margin-bottom:12px;text-align:center;">
+        <div style="font-size:10px;color:#b45309;font-family:var(--fu);font-weight:700;">CHASING ${target}</div>
+        <div style="font-size:13px;color:var(--home-text);font-family:var(--fu);font-weight:700;margin-top:2px;">Need ${runsNeeded} off ${ballsLeft} balls</div>
+      </div>`:''}
+
+      ${inn&&!matchComplete?`
+        <!-- Current batters -->
+        <div style="margin-bottom:14px;">
+          <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Batting</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${activeBatters.map((b,i)=>batCard(b,i===0?'⚡ STRIKER':'NON-STRIKER','#b45309')).join('')}
+          </div>
+        </div>
+
+        <!-- Current bowler(s) -->
+        <div style="margin-bottom:14px;">
+          <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Bowling</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${bowlCard(activeBowler,charlie?'🟢 BOWLING NOW':'🟢 CURRENT BOWLER','var(--grass)')}
+            ${charlie?bowlCard(waitingBowler,'🟡 BOWLING NEXT','#d97706'):''}
+          </div>
+        </div>
+
+        <!-- This over -->
+        ${overBalls?`<div style="margin-bottom:14px;">
+          <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Recent Balls</div>
+          <div class="over-row" style="background:#fff;border:1px solid var(--home-border);border-radius:10px;padding:8px;">${overBalls}</div>
+        </div>`:''}
+      `:''}
+
+      <!-- Full scorecard -->
+      ${i1?renderScorecard(i1,m.teamA,bpo):''}
+      ${i2?renderScorecard(i2,m.teamB,bpo):''}
+
+      <div style="text-align:center;margin-top:20px;font-size:9px;color:var(--home-muted);font-family:var(--fu);letter-spacing:1px;">
+        PITCHUP LIVE · A PRODUCT OF THINKVIZ LIMITED<br>
+        Auto-updates as scoring happens
+      </div>
+    </div>
+  </div>`;
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
+detectViewerMode();
 loadSyncConfig();
 loadAuthCache();
 loadState();
