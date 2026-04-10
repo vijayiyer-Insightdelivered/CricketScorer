@@ -920,31 +920,46 @@ function loadFromFirestore(){
 
 let _squadsUnsub=null;
 
+let _refreshingSquads=false;
 function reloadSquads(){
+  if(_refreshingSquads){toast('Already refreshing...','info');return;}
   if(!db){toast('Not connected to cloud','error');return;}
-  // Force from server (bypass local cache) so we know what's actually in Firestore
+  _refreshingSquads=true;
+  toast('Refreshing from cloud...','info');
+  document.querySelectorAll('[data-action="refresh-squads"]').forEach(b=>{b.disabled=true;b.style.opacity='.5';b.textContent='⌛ Refreshing...';});
   db.collection('squads').get({source:'server'}).then(snap=>{
     const fbSquads=[];
     snap.forEach(doc=>fbSquads.push(doc.data()));
     state.squads=fbSquads;
-    persist();render();
-    toast('Server has '+fbSquads.length+' squad'+(fbSquads.length!==1?'s':'')+' (forced refresh from cloud)','success');
+    persist();
+    _refreshingSquads=false;
+    render();
+    toast(fbSquads.length===0?'Cloud has no squads yet':('Loaded '+fbSquads.length+' squad'+(fbSquads.length!==1?'s':'')+' from cloud'),fbSquads.length===0?'warn':'success');
   }).catch(e=>{
-    toast('Failed to load from server: '+e.message+'\n\nFalling back to cached version.');
-    db.collection('squads').get().then(snap=>{
-      const fbSquads=[];snap.forEach(doc=>fbSquads.push(doc.data()));
-      state.squads=fbSquads;persist();render();
-    });
+    _refreshingSquads=false;
+    render();
+    toast('Refresh failed: '+e.message,'error');
   });
 }
 window.reloadSquads=reloadSquads;
 
+let _pushingSquads=false;
 function pushSquadsToCloud(){
+  if(_pushingSquads){toast('Already pushing...','info');return;}
   if(!db){toast('Not connected to cloud','error');return;}
-  if(!fbReady){toast('Firebase not ready — wait a moment and retry','error');return;}
+  if(!fbReady){toast('Firebase not ready — wait a moment','error');return;}
   if(!authUser){toast('You must be signed in to push squads','error');return;}
   if(state.squads.length===0){toast('No local squads to push','error');return;}
+  const setBusy=on=>{
+    _pushingSquads=on;
+    document.querySelectorAll('[data-action="push-squads"]').forEach(b=>{
+      b.disabled=on;b.style.opacity=on?'.5':'1';
+      b.textContent=on?'⌛ Pushing...':'⬆ Push to Cloud';
+    });
+  };
   const doPush=()=>{
+    setBusy(true);
+    toast('Pushing '+state.squads.length+' squad'+(state.squads.length!==1?'s':'')+'...','info');
     let succeeded=0,failed=0;
     const errors=[];
     const promises=state.squads.map(sq=>{
@@ -958,6 +973,7 @@ function pushSquadsToCloud(){
       },{merge:true}).then(()=>{succeeded++;}).catch(e=>{failed++;errors.push(sq.region+' / '+sq.group+': '+e.message);});
     });
     Promise.all(promises).then(()=>{
+      setBusy(false);
       if(failed===0){
         toast('Pushed '+succeeded+' squad'+(succeeded!==1?'s':'')+' to cloud','success');
       }else{
@@ -3588,8 +3604,8 @@ function renderSquads(){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px;">
         <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;font-weight:600;">Regions & Training Groups (${squads.length})</div>
         <div style="display:flex;gap:8px;">
-          <button onclick="pushSquadsToCloud()" style="background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:4px 10px;border-radius:7px;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;">⬆ Push to Cloud</button>
-          <button onclick="reloadSquads()" style="background:none;border:none;color:var(--grass2);font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+          <button data-action="push-squads" onclick="pushSquadsToCloud()" style="background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:5px 12px;border-radius:7px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">⬆ Push to Cloud</button>
+          <button data-action="refresh-squads" onclick="reloadSquads()" style="background:#f0fdf4;border:1px solid #bbf7d0;color:var(--grass);padding:5px 12px;border-radius:7px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
         </div>
       </div>
       ${content}
