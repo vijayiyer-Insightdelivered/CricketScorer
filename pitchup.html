@@ -773,6 +773,8 @@ function syncMatchToFirestore(force){
     scheduledBy:m.scheduledBy||null,
     scheduledByName:m.scheduledByName||'',
     scheduledAt:m.scheduledAt||null,
+    matchDate:m.matchDate||'',
+    venue:m.venue||'',
     complete:!!m.complete,date:m.date||null,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid,deviceId:getDeviceId()
@@ -824,6 +826,9 @@ function syncMatchDocToFirestore(m){
     scoringLockEmail:m.scoringLockEmail||'',
     scoringLockName:m.scoringLockName||'',
     scoringLockAt:m.scoringLockAt||null,
+    scheduled:!!m.scheduled,
+    matchDate:m.matchDate||'',
+    venue:m.venue||'',
     complete:!!m.complete,date:m.date||null,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid
@@ -1320,11 +1325,12 @@ function initSetup(teamAId,teamBId){
   setupData={
     step:0,teamA:tA?tA.name:'',teamB:tB?tB.name:'',
     format:'T20',overs:20,tossWinner:'A',tossChoice:'Bat',
-    bowlingMode:'charlie',  // 'charlie' | 'standard'
+    bowlingMode:'charlie',
     rules:{...DEFAULT_RULES},sizeA:8,sizeB:8,
     playersA:tA?tA.players.map(p=>p.name):Array(8).fill('').map((_,i)=>`Player ${i+1}`),
     playersB:tB?tB.players.map(p=>p.name):Array(8).fill('').map((_,i)=>`Player ${i+1}`),
     teamAId:teamAId||null,teamBId:teamBId||null,
+    matchDate:'',venue:'',
   };
 }
 window.initSetup=initSetup;
@@ -1439,7 +1445,7 @@ function handleSquadNext(){
   const d=setupData;
   const batting1st=d.tossChoice==='Bat'?(d.tossWinner==='A'?d.teamA:d.teamB):(d.tossWinner==='A'?d.teamB:d.teamA);
   state.match={
-    matchId:'m_'+uid(),
+    matchId:d.editingMatchId||('m_'+uid()),
     teamA:d.teamA,teamB:d.teamB,format:d.format,
     totalOvers:d.format==='T20'?20:Number(d.overs),
     tossWinner:d.tossWinner,tossChoice:d.tossChoice,batting1st,rules:{...d.rules},
@@ -1448,8 +1454,8 @@ function handleSquadNext(){
     clubId:d.clubId||null,regionId:d.regionId||null,
     playersA:d.playersA.slice(0,d.sizeA).filter(p=>p&&p.trim()),
     playersB:d.playersB.slice(0,d.sizeB).filter(p=>p&&p.trim()),
+    matchDate:d.matchDate||'',venue:d.venue||'',
     innings:[],
-    // Scoring lock — set when scoring starts
     scoringLockUid:authUser?.uid||null,
     scoringLockEmail:authUser?.email||'',
     scoringLockName:authUser?.displayName||authUser?.email||'',
@@ -1481,6 +1487,7 @@ function saveAsScheduledMatch(){
     teamAId:d.teamAId||null,teamBId:d.teamBId||null,
     clubId:d.clubId||null,regionId:d.regionId||null,
     playersA,playersB,
+    matchDate:d.matchDate||'',venue:d.venue||'',
     innings:existing?.innings||[],
     scheduled:true,
     complete:false,
@@ -1865,6 +1872,7 @@ function editScheduledMatch(matchId){
     playersB:(m.playersB&&m.playersB.length>0)?[...m.playersB]:Array(8).fill('').map((_,i)=>`Player ${i+1}`),
     teamAId:m.teamAId||null,teamBId:m.teamBId||null,
     clubId:m.clubId||null,regionId:m.regionId||null,
+    matchDate:m.matchDate||'',venue:m.venue||'',
   };
   state.screen='setup';
   render();
@@ -1894,7 +1902,13 @@ window.refreshScheduledMatches=refreshScheduledMatches;
 
 function renderScheduledMatches(){
   const scheduled=(state.activeMatches||[]).filter(m=>m.scheduled);
-  scheduled.sort((a,b)=>new Date(b.scheduledAt||0)-new Date(a.scheduledAt||0));
+  // Sort: matches with a date come first (chronological), then matches without a date
+  scheduled.sort((a,b)=>{
+    if(a.matchDate&&!b.matchDate)return -1;
+    if(!a.matchDate&&b.matchDate)return 1;
+    if(a.matchDate&&b.matchDate)return new Date(a.matchDate)-new Date(b.matchDate);
+    return new Date(b.scheduledAt||0)-new Date(a.scheduledAt||0);
+  });
 
   let content='';
   if(scheduled.length===0){
@@ -1908,12 +1922,26 @@ function renderScheduledMatches(){
       const aCount=(m.playersA||[]).length;
       const bCount=(m.playersB||[]).length;
       const ready=aCount>=2&&bCount>=2;
-      const dateStr=m.scheduledAt?new Date(m.scheduledAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'';
-      return `<div style="background:#fff;border:1.5px solid var(--home-border);border-left:4px solid #d97706;border-radius:12px;padding:12px;margin-bottom:10px;">
+      // Match date — the scheduled date for the game itself
+      let matchDateStr='',isUpcoming=false,isPast=false,isToday=false;
+      if(m.matchDate){
+        const md=new Date(m.matchDate);
+        const now=new Date();
+        const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+        const matchDay=new Date(md.getFullYear(),md.getMonth(),md.getDate());
+        isToday=matchDay.getTime()===today.getTime();
+        isUpcoming=md>now&&!isToday;
+        isPast=md<now&&!isToday;
+        matchDateStr=md.toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+      }
+      const borderColor=isToday?'var(--grass)':isPast?'#94a3b8':'#d97706';
+      return `<div style="background:#fff;border:1.5px solid var(--home-border);border-left:4px solid ${borderColor};border-radius:12px;padding:12px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;">
           <div style="flex:1;">
             <div style="font-family:var(--fd);font-size:16px;font-weight:700;color:var(--home-text);">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
-            <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:2px;">${m.totalOvers}ov · ${r.ballsPerOver}b/over · ${m.bowlingMode==='standard'?'Standard':'⚡ Charlie'}${dateStr?' · '+dateStr:''}</div>
+            ${matchDateStr?`<div style="font-size:12px;color:${isToday?'var(--grass)':isPast?'#94a3b8':'#b45309'};font-family:var(--fu);font-weight:700;margin-top:3px;">📅 ${matchDateStr}${isToday?' · TODAY':''}${isPast?' · past':''}</div>`:''}
+            ${m.venue?`<div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:2px;">📍 ${escHtml(m.venue)}</div>`:''}
+            <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:2px;">${m.totalOvers}ov · ${r.ballsPerOver}b/over · ${m.bowlingMode==='standard'?'Standard':'⚡ Charlie'}</div>
             ${m.scheduledByName?`<div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);margin-top:2px;">Scheduled by ${escHtml(m.scheduledByName)}</div>`:''}
           </div>
         </div>
@@ -2292,6 +2320,15 @@ function renderSetup(){
           ${d.format==='Custom'?`<input class="form-input" style="margin-top:8px" type="number" min="1" max="50" value="${d.overs}" oninput="setupData.overs=Number(this.value)" placeholder="Overs (e.g. 30, 40)"/>`:''}
         </div>
         <div class="form-section">
+          <label class="form-label">📅 Match Date & Time</label>
+          <input class="form-input" type="datetime-local" value="${escHtml(d.matchDate||'')}" oninput="setupData.matchDate=this.value;render()"/>
+          ${d.matchDate?`<div style="font-size:11px;color:var(--home-muted);margin-top:6px;font-family:var(--fu);">${new Date(d.matchDate).toLocaleString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>`:'<div style="font-size:11px;color:var(--home-muted);margin-top:6px;font-family:var(--fu);">Optional — leave blank for unscheduled matches</div>'}
+        </div>
+        <div class="form-section">
+          <label class="form-label">📍 Venue (optional)</label>
+          <input class="form-input" type="text" value="${escHtml(d.venue||'')}" placeholder="e.g. Hampshire CC Ground" oninput="setupData.venue=this.value"/>
+        </div>
+        <div class="form-section">
           <label class="form-label">Toss</label>
           <div class="seg-row" style="margin-bottom:8px;">
             <button class="seg-btn ${d.tossWinner==='A'?'agold':''}" onclick="setupData.tossWinner='A';render()">${escHtml(d.teamA||'Team A')} won</button>
@@ -2340,6 +2377,7 @@ function renderSetup(){
     <div class="screen-inner">
       <div style="font-size:11px;color:var(--home-muted);margin-bottom:12px;font-family:'Rajdhani',sans-serif;letter-spacing:.5px;">${size} players · up to ${size} can bat</div>
       ${sq}
+      ${renderSetupSquadPicker(isA?'A':'B')}
       <div class="nav-row" style="margin-top:14px;">
         <button class="btn-secondary" onclick="setupData.step=${d.step===2?1:0};render()">← Back</button>
         <button class="btn-primary" onclick="handleSquadNext()">
@@ -2347,6 +2385,98 @@ function renderSetup(){
         </button>
       </div>
       <button class="btn-secondary" style="width:100%;margin-top:8px;background:#fffbeb;border-color:#fde68a;color:#b45309;" onclick="saveAsScheduledMatch()">${d.editingMatchId?'💾 Save & Exit':'📅 Save as Scheduled'}</button>
+    </div>
+  </div>`;
+}
+
+// Add player to setup squad from master squad
+function addSetupPlayerFromSquad(side,name){
+  const arr=side==='A'?setupData.playersA:setupData.playersB;
+  const sizeKey=side==='A'?'sizeA':'sizeB';
+  // Find first empty slot
+  const emptyIdx=arr.findIndex((p,i)=>i<setupData[sizeKey]&&(!p||!p.trim()));
+  if(emptyIdx>=0){
+    arr[emptyIdx]=name;
+  }else{
+    // No empty slot — extend size
+    arr.push(name);
+    setupData[sizeKey]=Math.min(15,setupData[sizeKey]+1);
+  }
+  render();
+}
+window.addSetupPlayerFromSquad=addSetupPlayerFromSquad;
+
+function renderSetupSquadPicker(side){
+  if(state.squads.length===0)return '';
+  const f=teamPickerFilter;
+  const arr=side==='A'?setupData.playersA:setupData.playersB;
+  const sizeKey=side==='A'?'sizeA':'sizeB';
+  const existingNames=arr.slice(0,setupData[sizeKey]).map(p=>(p||'').trim().toLowerCase()).filter(Boolean);
+
+  const allRegions=[...new Set(state.squads.map(s=>s.region).filter(Boolean))].sort();
+  const allGroups=[...new Set(state.squads.filter(s=>!f.region||s.region===f.region).map(s=>s.group).filter(Boolean))].sort();
+  const searchLower=f.search.trim().toLowerCase();
+
+  const matches=[];
+  state.squads.forEach(sq=>{
+    if(f.region&&sq.region!==f.region)return;
+    if(f.group&&sq.group!==f.group)return;
+    sq.players.forEach(p=>{
+      if(searchLower&&!p.name.toLowerCase().includes(searchLower))return;
+      if(f.skills.length>0){
+        const ps=p.skills||[];
+        if(!f.skills.some(s=>ps.includes(s)))return;
+      }
+      matches.push({...p,region:sq.region,group:sq.group});
+    });
+  });
+  matches.sort((a,b)=>{
+    const aIn=existingNames.includes(a.name.trim().toLowerCase())?1:0;
+    const bIn=existingNames.includes(b.name.trim().toLowerCase())?1:0;
+    if(aIn!==bIn)return aIn-bIn;
+    return a.name.localeCompare(b.name);
+  });
+
+  const skillChips=PLAYER_SKILLS.map(s=>{
+    const on=f.skills.includes(s.key);
+    return `<button onclick="togglePickerSkill('${s.key}')" style="padding:4px 9px;border-radius:7px;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;border:1.5px solid ${on?s.color:'var(--home-border)'};background:${on?s.color+'18':'#fff'};color:${on?s.color:'var(--home-muted)'};">${s.icon} ${s.label}</button>`;
+  }).join('');
+  const filtersActive=f.search||f.skills.length>0||f.region||f.group;
+
+  return `<div style="background:#fff;border:1.5px solid var(--home-border);border-radius:13px;padding:12px;margin-top:14px;color:var(--home-text);">
+    <div style="font-family:var(--fd);font-size:12px;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">🏅 Pick from Master Squad</div>
+    <input type="search" placeholder="🔍 Search players..." value="${escHtml(f.search)}"
+      oninput="updatePickerSearch(this.value)"
+      style="width:100%;padding:9px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);color:var(--home-text);background:#f8fafc;margin-bottom:8px;"/>
+    <div style="display:flex;gap:6px;margin-bottom:8px;">
+      <select onchange="setPickerRegion(this.value)" style="flex:1;padding:7px 8px;border:1.5px solid var(--home-border);border-radius:9px;font-size:11px;font-family:var(--fu);background:#f8fafc;color:var(--home-text);">
+        <option value="">All Regions</option>
+        ${allRegions.map(r=>`<option value="${escHtml(r)}" ${f.region===r?'selected':''}>📍 ${escHtml(r)}</option>`).join('')}
+      </select>
+      <select onchange="setPickerGroup(this.value)" style="flex:1;padding:7px 8px;border:1.5px solid var(--home-border);border-radius:9px;font-size:11px;font-family:var(--fu);background:#f8fafc;color:var(--home-text);">
+        <option value="">All Groups</option>
+        ${allGroups.map(g=>`<option value="${escHtml(g)}" ${f.group===g?'selected':''}>${escHtml(g)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;">${skillChips}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:10px;font-family:var(--fu);color:var(--home-muted);">
+      <span><strong style="color:var(--home-text);">${matches.length}</strong> match${matches.length!==1?'es':''}</span>
+      ${filtersActive?`<button onclick="clearPickerFilters()" style="background:none;border:none;color:#dc2626;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;">Clear ✕</button>`:''}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;">
+      ${matches.length===0?'<div style="color:var(--home-muted);font-size:12px;text-align:center;padding:14px;font-family:var(--fu);">No players match the filters</div>':matches.map(p=>{
+        const alreadyAdded=existingNames.includes(p.name.trim().toLowerCase());
+        const safeName=p.name.replace(/'/g,"\\'");
+        const skillTags=(p.skills||[]).map(sk=>{
+          const def=PLAYER_SKILLS.find(s=>s.key===sk);
+          return def?`<span style="font-size:8px;padding:1px 4px;border-radius:4px;background:${def.color}18;color:${def.color};font-weight:700;">${def.icon}</span>`:'';
+        }).join('');
+        return `<button style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:600;cursor:pointer;border:1px solid ${alreadyAdded?'#bbf7d0':'var(--home-border)'};background:${alreadyAdded?'#f0fdf4':'#f8fafc'};color:${alreadyAdded?'var(--grass)':'var(--home-text)'};text-align:left;" onclick="${alreadyAdded?'':`addSetupPlayerFromSquad('${side}','${safeName}')`}" ${alreadyAdded?'disabled':''}>
+          <span style="flex:1;">${escHtml(p.name)}${alreadyAdded?' ✓':''}</span>
+          <span style="display:flex;gap:2px;">${skillTags}</span>
+          <span style="font-size:9px;color:var(--home-muted);">${escHtml(p.group)}</span>
+        </button>`;
+      }).join('')}
     </div>
   </div>`;
 }
