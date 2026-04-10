@@ -744,6 +744,7 @@ function syncMatchToFirestore(force){
       charlieBowlers:[...inn.charlieBowlers],
       deliveries:inn.deliveries.map(d=>({...d}))
     }:null),
+    playerNotes:(m.playerNotes||[]).map(n=>({...n})),
     complete:!!m.complete,date:m.date||null,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid,deviceId:getDeviceId()
@@ -790,6 +791,7 @@ function syncMatchDocToFirestore(m){
       charlieBowlers:[...inn.charlieBowlers],
       deliveries:inn.deliveries.map(d=>({...d}))
     }:null),
+    playerNotes:(m.playerNotes||[]).map(n=>({...n})),
     complete:!!m.complete,date:m.date||null,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid
@@ -2329,7 +2331,9 @@ function savePlayerNote(){
     category:document.getElementById('note-category')?.value||'general'
   });
   noteFormText='';
-  persist();closeModal();
+  persist();
+  if(state.match&&!state.match.complete)syncMatchToFirestore(true);
+  closeModal();
 }
 window.savePlayerNote=savePlayerNote;
 
@@ -2961,7 +2965,8 @@ function initPlayerEntry(){
     bat:{inn:0,runs:0,balls:0,fours:0,sixes:0,hs:0,notOuts:0,outs:0,
       dismissals:{Bowled:0,Caught:0,LBW:0,'Run Out':0,Stumped:0,'Hit Wicket':0,Retired:0,other:0}},
     bowl:{balls:0,runs:0,wickets:0,wides:0,noBalls:0,best:''},
-    field:{catches:0,runOuts:0,stumpings:0}
+    field:{catches:0,runOuts:0,stumpings:0},
+    notesCount:0
   };
 }
 
@@ -3018,6 +3023,12 @@ function aggregatePlayerStats(){
           else if(dtype==='Stumped')fp.field.stumpings+=1;
         }
       });
+    });
+    // Notes count from match.playerNotes
+    (m.playerNotes||[]).forEach(n=>{
+      if(!n.playerName)return;
+      if(!players[n.playerName]){const e=initPlayerEntry();e.name=n.playerName;players[n.playerName]=e;}
+      players[n.playerName].notesCount=(players[n.playerName].notesCount||0)+1;
     });
   });
   // Convert Sets to counts and compute derived stats
@@ -3127,6 +3138,10 @@ function renderPlayerPerformance(){
         ${(p.field.catches>0||p.field.runOuts>0)?`<div style="text-align:center;">
           <div style="font-family:var(--fd);font-size:14px;color:#d97706;">${p.field.catches+p.field.runOuts+p.field.stumpings}</div>
           <div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">FLD</div>
+        </div>`:''}
+        ${p.notesCount>0?`<div style="text-align:center;">
+          <div style="font-family:var(--fd);font-size:14px;color:#7c3aed;">📝${p.notesCount}</div>
+          <div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">NOTES</div>
         </div>`:''}
       </div>
       <span style="color:#cbd5e1;font-size:14px;">›</span>
@@ -3267,6 +3282,54 @@ function renderPlayerDetail(){
           <div><div style="font-family:var(--fd);font-size:22px;color:var(--home-text);">${stats.field.stumpings}</div><div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">STUMPINGS</div></div>
         </div>
       </div>`:''}
+      ${(()=>{
+        // Consolidated notes across all matches
+        const allNotes=[];
+        state.savedMatches.forEach(m=>{
+          (m.playerNotes||[]).forEach(n=>{
+            if(n.playerName===name)allNotes.push({...n,matchDate:m.date,matchTeams:m.teamA+' vs '+m.teamB});
+          });
+        });
+        if(allNotes.length===0)return '';
+        // Sort newest first
+        allNotes.sort((a,b)=>new Date(b.timestamp||0)-new Date(a.timestamp||0));
+        // Group by category
+        const byCategory={};
+        allNotes.forEach(n=>{const c=n.category||'general';if(!byCategory[c])byCategory[c]=[];byCategory[c].push(n);});
+        const catOrder=['appreciation','improvement','technique','attitude','general'];
+        const catColors={appreciation:'#16a34a',improvement:'#2563eb',technique:'#7c3aed',attitude:'#d97706',general:'var(--home-muted)'};
+        const catIcons={appreciation:'👏',improvement:'📈',technique:'🎯',attitude:'💪',general:'📝'};
+        const catLabels={appreciation:'Appreciation',improvement:'Improvement',technique:'Technique',attitude:'Attitude',general:'General'};
+        return `<div class="team-form-card" style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div style="font-family:var(--fu);font-size:11px;font-weight:700;letter-spacing:1.5px;color:#7c3aed;text-transform:uppercase;">📝 Coaching Notes (${allNotes.length})</div>
+          </div>
+          <!-- Category counts -->
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+            ${catOrder.filter(c=>byCategory[c]).map(c=>`
+              <div style="background:#fff;border:1px solid var(--home-border);border-left:3px solid ${catColors[c]};border-radius:6px;padding:4px 10px;">
+                <span style="font-size:11px;font-family:var(--fu);font-weight:700;color:${catColors[c]};">${catIcons[c]} ${byCategory[c].length}</span>
+                <span style="font-size:9px;color:var(--home-muted);font-family:var(--fu);margin-left:3px;">${catLabels[c]}</span>
+              </div>`).join('')}
+          </div>
+          <!-- All notes -->
+          <div style="max-height:340px;overflow-y:auto;">
+            ${allNotes.map(n=>{
+              const d=new Date(n.timestamp||n.matchDate||0).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+              const col=catColors[n.category]||'var(--home-muted)';
+              const icon=catIcons[n.category]||'📝';
+              return `<div style="background:#fff;border:1px solid var(--home-border);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid ${col};">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                  <span style="font-size:9px;color:${col};font-family:var(--fu);font-weight:700;letter-spacing:1px;">${icon} ${(n.category||'general').toUpperCase()}</span>
+                  <span style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">${d}</span>
+                </div>
+                <div style="font-size:11px;color:var(--home-text);font-family:var(--fb);line-height:1.4;">${escHtml(n.note)}</div>
+                <div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);margin-top:3px;">${escHtml(n.matchTeams)}${n.author?' · '+escHtml(n.author):''}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      })()}
       <div style="font-family:var(--fu);font-size:11px;font-weight:700;letter-spacing:1.5px;color:var(--home-muted);text-transform:uppercase;margin-bottom:8px;">Match History</div>
       ${histRows.length>0?histRows:'<div style="color:var(--home-muted);font-size:12px;">No match history</div>'}
       <div style="margin-top:14px;">
