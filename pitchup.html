@@ -749,6 +749,10 @@ function syncMatchToFirestore(force){
     scoringLockEmail:m.scoringLockEmail||'',
     scoringLockName:m.scoringLockName||'',
     scoringLockAt:m.scoringLockAt||null,
+    scheduled:!!m.scheduled,
+    scheduledBy:m.scheduledBy||null,
+    scheduledByName:m.scheduledByName||'',
+    scheduledAt:m.scheduledAt||null,
     complete:!!m.complete,date:m.date||null,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid,deviceId:getDeviceId()
@@ -1219,6 +1223,24 @@ function addPlayerFromSquad(name){
 }
 window.addPlayerFromSquad=addPlayerFromSquad;
 window.addTeamPlayer=addTeamPlayer;
+
+// ─── Squad Picker Filter ──────────────────────────────────────────────────────
+let teamPickerFilter={search:'',skills:[],region:'',group:''};
+function updatePickerSearch(v){teamPickerFilter.search=v;render();}
+window.updatePickerSearch=updatePickerSearch;
+function togglePickerSkill(key){
+  const i=teamPickerFilter.skills.indexOf(key);
+  if(i>=0)teamPickerFilter.skills.splice(i,1);else teamPickerFilter.skills.push(key);
+  render();
+}
+window.togglePickerSkill=togglePickerSkill;
+function setPickerRegion(v){teamPickerFilter.region=v;teamPickerFilter.group='';render();}
+window.setPickerRegion=setPickerRegion;
+function setPickerGroup(v){teamPickerFilter.group=v;render();}
+window.setPickerGroup=setPickerGroup;
+function clearPickerFilters(){teamPickerFilter={search:'',skills:[],region:'',group:''};render();}
+window.clearPickerFilters=clearPickerFilters;
+
 function removeTeamPlayer(idx){if(editTeamData.players.length<=1)return;editTeamData.players.splice(idx,1);render();}
 window.removeTeamPlayer=removeTeamPlayer;
 function setSquadSizeEdit(delta){
@@ -1267,6 +1289,45 @@ function handleSquadNext(){
   state.currentInnings=0;state.screen='innings_setup';render();
 }
 window.handleSquadNext=handleSquadNext;
+
+function saveAsScheduledMatch(){
+  const d=setupData;
+  if(!d.teamA||!d.teamB){alert('Enter both team names');return;}
+  const playersA=d.playersA.slice(0,d.sizeA).filter(p=>p&&p.trim());
+  const playersB=d.playersB.slice(0,d.sizeB).filter(p=>p&&p.trim());
+  if(playersA.length<2||playersB.length<2){alert('Each team needs at least 2 players');return;}
+  const batting1st=d.tossChoice==='Bat'?(d.tossWinner==='A'?d.teamA:d.teamB):(d.tossWinner==='A'?d.teamB:d.teamA);
+  const m={
+    matchId:'m_'+uid(),
+    teamA:d.teamA,teamB:d.teamB,format:d.format,
+    totalOvers:d.format==='T20'?20:Number(d.overs),
+    tossWinner:d.tossWinner,tossChoice:d.tossChoice,batting1st,rules:{...d.rules},
+    bowlingMode:d.bowlingMode||'charlie',
+    teamAId:d.teamAId||null,teamBId:d.teamBId||null,
+    clubId:d.clubId||null,regionId:d.regionId||null,
+    playersA,playersB,
+    innings:[],
+    scheduled:true,           // marker for scheduled
+    complete:false,
+    scoringLockUid:null,scoringLockEmail:'',scoringLockName:'',scoringLockAt:null,
+    scheduledBy:authUser?.uid||null,
+    scheduledByName:authUser?.displayName||authUser?.email||'',
+    scheduledAt:new Date().toISOString(),
+    date:new Date().toISOString(),
+  };
+  // Save to Firestore directly (don't go to scoring screen)
+  state.match=m;
+  syncMatchToFirestore(true);
+  state.match=null;
+  alert('Match scheduled! Another coach can pick it up from Active Matches.');
+  state.screen='home';render();
+  // Refresh active matches list
+  setTimeout(()=>{if(db)db.collection('matches').where('complete','==',false).limit(20).get().then(snap=>{
+    const fbActive=[];snap.forEach(doc=>fbActive.push(doc.data()));
+    state.activeMatches=fbActive;render();
+  });},800);
+}
+window.saveAsScheduledMatch=saveAsScheduledMatch;
 
 // ─── Innings setup state ──────────────────────────────────────────────────────
 let innSetup={op1:0,op2:1,bw1:0,bw2:1};
@@ -1440,11 +1501,29 @@ function renderHome(){
       </div>`;
   }
 
-  // Active in-progress matches
+  // Active and scheduled matches
   let activeHtml='';
-  const active=state.activeMatches||[];
+  const allInProgress=state.activeMatches||[];
+  const scheduled=allInProgress.filter(m=>m.scheduled&&(!m.innings||m.innings.length===0));
+  const active=allInProgress.filter(m=>!scheduled.includes(m));
+
+  if(scheduled.length>0){
+    activeHtml+=`<div class="home-sec">
+      <div class="home-sec-title" style="color:#b45309;">📅 Scheduled Matches (${scheduled.length})</div>
+      ${scheduled.map(m=>{
+        const r=m.rules||DEFAULT_RULES;
+        return `<div class="match-card" style="border-left:3px solid #d97706;">
+          <div style="flex:1;">
+            <div class="match-vs">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
+            <div class="match-meta">${m.totalOvers}ov · ${r.ballsPerOver}b/over · ${m.bowlingMode==='standard'?'Standard':'⚡ Charlie'}${m.scheduledByName?' · by '+escHtml(m.scheduledByName):''}</div>
+          </div>
+          <button class="match-csv" style="background:#fffbeb;border-color:#fde68a;color:#b45309;" onclick="startScheduledMatch('${m.matchId}')">▶ Start</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
   if(active.length>0){
-    activeHtml=`<div class="home-sec">
+    activeHtml+=`<div class="home-sec">
       <div class="home-sec-title" style="color:var(--grass);">🔴 Active Matches (${active.length})</div>
       ${active.map(m=>{
         const isMine=m.scoringLockUid===authUser?.uid;
@@ -1582,6 +1661,18 @@ function renderHome(){
   </div>`;
 }
 
+function startScheduledMatch(matchId){
+  const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
+  if(!m){alert('Match not found');return;}
+  // Convert from scheduled to active and load into setup
+  state.match={...m,scheduled:false};
+  state.currentInnings=0;
+  resetSyncCounters();
+  state.screen='innings_setup';
+  render();
+}
+window.startScheduledMatch=startScheduledMatch;
+
 function resumeActiveMatch(matchId){
   const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
   if(!m){alert('Match not found');return;}
@@ -1717,43 +1808,90 @@ function renderEditTeam(){
 
         return balanceCard;
       })()}
-      ${state.squads.length>0?`<div class="team-form-card">
-        <div class="team-form-title" style="color:#b45309;">🏅 Pick from Master Squad</div>
-        <div style="font-size:11px;color:var(--home-muted);margin-bottom:10px;font-family:var(--fu);">Tap players to add · Skills shown as tags</div>
-        ${(()=>{
-          const regions={};
-          state.squads.forEach(sq=>{
-            const r=sq.region||'Unassigned';
-            if(!regions[r])regions[r]=[];
-            regions[r].push(sq);
+      ${state.squads.length>0?(()=>{
+        const f=teamPickerFilter;
+        const allRegions=[...new Set(state.squads.map(s=>s.region).filter(Boolean))].sort();
+        const allGroups=[...new Set(state.squads.filter(s=>!f.region||s.region===f.region).map(s=>s.group).filter(Boolean))].sort();
+        const existingNames=editTeamData.players.map(p=>p.name.trim().toLowerCase()).filter(Boolean);
+        const searchLower=f.search.trim().toLowerCase();
+
+        // Build flat filtered list
+        const matches=[];
+        state.squads.forEach(sq=>{
+          if(f.region&&sq.region!==f.region)return;
+          if(f.group&&sq.group!==f.group)return;
+          sq.players.forEach(p=>{
+            if(searchLower&&!p.name.toLowerCase().includes(searchLower))return;
+            if(f.skills.length>0){
+              const ps=p.skills||[];
+              if(!f.skills.some(s=>ps.includes(s)))return;
+            }
+            matches.push({...p,region:sq.region,group:sq.group});
           });
-          const existingNames=editTeamData.players.map(p=>p.name.trim().toLowerCase()).filter(Boolean);
-          return Object.keys(regions).sort().map(region=>{
-            return `<div style="margin-bottom:10px;">
-              <div style="font-size:10px;color:#b45309;font-family:var(--fu);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">📍 ${escHtml(region)}</div>
-              ${regions[region].map(sq=>{
-                return `<div style="margin-bottom:8px;">
-                  <div style="font-size:11px;color:var(--home-text);font-family:var(--fu);font-weight:700;margin-bottom:4px;">${escHtml(sq.group)}</div>
-                  <div style="display:flex;flex-direction:column;gap:4px;">
-                    ${sq.players.map(p=>{
-                      const alreadyAdded=existingNames.includes(p.name.trim().toLowerCase());
-                      const safeName=p.name.replace(/'/g,"\\'");
-                      const skillTags=(p.skills||[]).map(sk=>{
-                        const def=PLAYER_SKILLS.find(s=>s.key===sk);
-                        return def?`<span style="font-size:8px;padding:1px 4px;border-radius:4px;background:${def.color}18;color:${def.color};font-weight:700;">${def.icon}${def.label}</span>`:'';
-                      }).join('');
-                      return `<button style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:600;cursor:pointer;border:1px solid ${alreadyAdded?'#bbf7d0':'var(--home-border)'};background:${alreadyAdded?'#f0fdf4':'#fff'};color:${alreadyAdded?'var(--grass)':'var(--home-text)'};text-align:left;" onclick="${alreadyAdded?'':`addPlayerFromSquad('${safeName}')`}" ${alreadyAdded?'disabled':''}>
-                        <span style="flex:1;">${escHtml(p.name)}${alreadyAdded?' ✓':''}</span>
-                        <span style="display:flex;gap:3px;">${skillTags}</span>
-                      </button>`;
-                    }).join('')}
-                  </div>
-                </div>`;
-              }).join('')}
-            </div>`;
-          }).join('');
-        })()}
-      </div>`:''}
+        });
+        // Sort: not yet added first, then by name
+        matches.sort((a,b)=>{
+          const aIn=existingNames.includes(a.name.trim().toLowerCase())?1:0;
+          const bIn=existingNames.includes(b.name.trim().toLowerCase())?1:0;
+          if(aIn!==bIn)return aIn-bIn;
+          return a.name.localeCompare(b.name);
+        });
+
+        const skillChips=PLAYER_SKILLS.map(s=>{
+          const on=f.skills.includes(s.key);
+          return `<button onclick="togglePickerSkill('${s.key}')" style="padding:4px 9px;border-radius:7px;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;border:1.5px solid ${on?s.color:'var(--home-border)'};background:${on?s.color+'18':'#fff'};color:${on?s.color:'var(--home-muted)'};">${s.icon} ${s.label}</button>`;
+        }).join('');
+
+        const filtersActive=f.search||f.skills.length>0||f.region||f.group;
+
+        return `<div class="team-form-card">
+          <div class="team-form-title" style="color:#b45309;">🏅 Pick from Master Squad</div>
+          <div style="font-size:11px;color:var(--home-muted);margin-bottom:10px;font-family:var(--fu);">Filter and search · Tap players to add</div>
+
+          <!-- Search -->
+          <input type="search" placeholder="🔍 Search players by name..." value="${escHtml(f.search)}"
+            oninput="updatePickerSearch(this.value)"
+            style="width:100%;padding:9px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);color:var(--home-text);background:#fff;margin-bottom:8px;"/>
+
+          <!-- Region & Group filters -->
+          <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <select onchange="setPickerRegion(this.value)" style="flex:1;padding:7px 8px;border:1.5px solid var(--home-border);border-radius:9px;font-size:11px;font-family:var(--fu);background:#fff;color:var(--home-text);">
+              <option value="">All Regions</option>
+              ${allRegions.map(r=>`<option value="${escHtml(r)}" ${f.region===r?'selected':''}>📍 ${escHtml(r)}</option>`).join('')}
+            </select>
+            <select onchange="setPickerGroup(this.value)" style="flex:1;padding:7px 8px;border:1.5px solid var(--home-border);border-radius:9px;font-size:11px;font-family:var(--fu);background:#fff;color:var(--home-text);">
+              <option value="">All Groups</option>
+              ${allGroups.map(g=>`<option value="${escHtml(g)}" ${f.group===g?'selected':''}>${escHtml(g)}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Skill chips -->
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;">${skillChips}</div>
+
+          <!-- Filter status + clear -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:10px;font-family:var(--fu);color:var(--home-muted);">
+            <span><strong style="color:var(--home-text);">${matches.length}</strong> match${matches.length!==1?'es':''}</span>
+            ${filtersActive?`<button onclick="clearPickerFilters()" style="background:none;border:none;color:#dc2626;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;">Clear Filters ✕</button>`:''}
+          </div>
+
+          <!-- Player list (filtered) -->
+          <div style="display:flex;flex-direction:column;gap:4px;max-height:340px;overflow-y:auto;">
+            ${matches.length===0?'<div style="color:var(--home-muted);font-size:12px;text-align:center;padding:20px;font-family:var(--fu);">No players match the filters</div>':matches.map(p=>{
+              const alreadyAdded=existingNames.includes(p.name.trim().toLowerCase());
+              const safeName=p.name.replace(/'/g,"\\'");
+              const skillTags=(p.skills||[]).map(sk=>{
+                const def=PLAYER_SKILLS.find(s=>s.key===sk);
+                return def?`<span style="font-size:8px;padding:1px 4px;border-radius:4px;background:${def.color}18;color:${def.color};font-weight:700;">${def.icon}</span>`:'';
+              }).join('');
+              return `<button style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:600;cursor:pointer;border:1px solid ${alreadyAdded?'#bbf7d0':'var(--home-border)'};background:${alreadyAdded?'#f0fdf4':'#fff'};color:${alreadyAdded?'var(--grass)':'var(--home-text)'};text-align:left;" onclick="${alreadyAdded?'':`addPlayerFromSquad('${safeName}')`}" ${alreadyAdded?'disabled':''}>
+                <span style="flex:1;">${escHtml(p.name)}${alreadyAdded?' ✓':''}</span>
+                <span style="display:flex;gap:2px;">${skillTags}</span>
+                <span style="font-size:9px;color:var(--home-muted);">${escHtml(p.group)}</span>
+              </button>`;
+            }).join('')}
+          </div>
+        </div>`;
+      })():''}
       <div class="light-nav-row">
         <button class="light-btn-secondary" onclick="state.screen='teams';state.editTeamId=null;render()">Cancel</button>
         <button class="light-btn-primary" onclick="saveTeam()">✓ Save Team</button>
@@ -1928,6 +2066,7 @@ function renderSetup(){
           ${d.step===1?`Next: ${escHtml(d.teamB||'Team B')} Squad →`:'🏏 Start Match'}
         </button>
       </div>
+      ${d.step===2?`<button class="btn-secondary" style="width:100%;margin-top:8px;background:#fffbeb;border-color:#fde68a;color:#b45309;" onclick="saveAsScheduledMatch()">📅 Save as Scheduled (start scoring later)</button>`:''}
     </div>
   </div>`;
 }
