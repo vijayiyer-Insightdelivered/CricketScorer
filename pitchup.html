@@ -373,6 +373,25 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;}
 .offline-bar{background:#fef3c7;border-bottom:1.5px solid #fde68a;padding:7px 16px;font-size:11px;color:#92400e;font-family:var(--fu);letter-spacing:.5px;display:none;text-align:center;}
 .offline-bar.show{display:block;}
 .sync-bar{padding:5px 16px;font-size:11px;font-family:var(--fu);letter-spacing:.5px;text-align:center;}
+/* Toast & custom modals */
+#toast-container{position:fixed;top:env(safe-area-inset-top,0);left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px;z-index:500;pointer-events:none;}
+.toast{pointer-events:auto;background:#0f172a;color:#fff;padding:11px 16px;border-radius:11px;font-family:var(--fu);font-size:13px;font-weight:600;max-width:380px;box-shadow:0 8px 24px rgba(0,0,0,.25);animation:toastIn .25s ease-out;display:flex;align-items:center;gap:10px;line-height:1.4;}
+.toast.success{background:#166534;}
+.toast.error{background:#991b1b;}
+.toast.warn{background:#b45309;}
+.toast.info{background:#1e40af;}
+@keyframes toastIn{from{opacity:0;transform:translateY(-12px);}to{opacity:1;transform:none;}}
+.confirm-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:600;padding:20px;}
+.confirm-sheet{background:#fff;border-radius:16px;padding:22px 20px;max-width:380px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.3);}
+.confirm-title{font-family:var(--fd);font-size:17px;font-weight:700;color:var(--home-text);margin-bottom:6px;}
+.confirm-msg{font-size:13px;color:#475569;font-family:var(--fb);line-height:1.5;margin-bottom:18px;white-space:pre-wrap;}
+.confirm-input{width:100%;padding:10px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:14px;font-family:var(--fb);margin-bottom:14px;background:#fff;color:var(--home-text);}
+.confirm-input:focus{outline:none;border-color:var(--grass2);}
+.confirm-actions{display:flex;gap:8px;}
+.confirm-btn{flex:1;padding:11px;border-radius:9px;font-family:var(--fu);font-size:13px;font-weight:700;cursor:pointer;border:none;}
+.confirm-btn.ok{background:linear-gradient(135deg,var(--grass),var(--grass2));color:#fff;}
+.confirm-btn.danger{background:#dc2626;color:#fff;}
+.confirm-btn.cancel{background:#f1f5f9;color:#475569;border:1px solid var(--home-border);}
 .sync-bar.synced{background:#dcfce7;border-bottom:1.5px solid #bbf7d0;color:#166534;}
 .sync-bar.pending{background:#fef3c7;border-bottom:1.5px solid #fde68a;color:#92400e;}
 .sync-bar.offline{background:#fef3c7;border-bottom:1.5px solid #fde68a;color:#92400e;}
@@ -389,6 +408,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;}
 <body>
 <div id="offline-bar" class="offline-bar">📶 Offline mode — all scoring & data saves locally on your device</div>
 <div id="sync-bar" class="sync-bar" style="display:none;"></div>
+<div id="toast-container"></div>
 <div id="app"></div>
 <script>
 'use strict';
@@ -901,16 +921,16 @@ function loadFromFirestore(){
 let _squadsUnsub=null;
 
 function reloadSquads(){
-  if(!db){alert('Not connected to cloud');return;}
+  if(!db){toast('Not connected to cloud','error');return;}
   // Force from server (bypass local cache) so we know what's actually in Firestore
   db.collection('squads').get({source:'server'}).then(snap=>{
     const fbSquads=[];
     snap.forEach(doc=>fbSquads.push(doc.data()));
     state.squads=fbSquads;
     persist();render();
-    alert('Server has '+fbSquads.length+' squad'+(fbSquads.length!==1?'s':'')+' (forced refresh from cloud)');
+    toast('Server has '+fbSquads.length+' squad'+(fbSquads.length!==1?'s':'')+' (forced refresh from cloud)','success');
   }).catch(e=>{
-    alert('Failed to load from server: '+e.message+'\n\nFalling back to cached version.');
+    toast('Failed to load from server: '+e.message+'\n\nFalling back to cached version.');
     db.collection('squads').get().then(snap=>{
       const fbSquads=[];snap.forEach(doc=>fbSquads.push(doc.data()));
       state.squads=fbSquads;persist();render();
@@ -920,33 +940,40 @@ function reloadSquads(){
 window.reloadSquads=reloadSquads;
 
 function pushSquadsToCloud(){
-  if(!db){alert('Not connected to cloud');return;}
-  if(!fbReady){alert('Firebase not ready — wait a moment and retry');return;}
-  if(!authUser){alert('You must be signed in to push squads');return;}
-  if(state.squads.length===0){alert('No local squads to push');return;}
+  if(!db){toast('Not connected to cloud','error');return;}
+  if(!fbReady){toast('Firebase not ready — wait a moment and retry','error');return;}
+  if(!authUser){toast('You must be signed in to push squads','error');return;}
+  if(state.squads.length===0){toast('No local squads to push','error');return;}
+  const doPush=()=>{
+    let succeeded=0,failed=0;
+    const errors=[];
+    const promises=state.squads.map(sq=>{
+      return db.collection('squads').doc(sq.id).set({
+        id:sq.id,
+        region:sq.region||'',
+        group:sq.group||'',
+        players:sq.players.map(p=>({id:p.id,name:p.name,skills:p.skills||[]})),
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+        updatedBy:fbUid
+      },{merge:true}).then(()=>{succeeded++;}).catch(e=>{failed++;errors.push(sq.region+' / '+sq.group+': '+e.message);});
+    });
+    Promise.all(promises).then(()=>{
+      if(failed===0){
+        toast('Pushed '+succeeded+' squad'+(succeeded!==1?'s':'')+' to cloud','success');
+      }else{
+        toast('Pushed '+succeeded+'/'+state.squads.length+' squads. '+errors[0],'error');
+      }
+    });
+  };
   if(!isSyncEnabled()){
-    if(!confirm('Cloud sync is disabled in Device Settings. Enable it temporarily and push '+state.squads.length+' squads?'))return;
-    syncConfig.enabled=true;saveSyncConfig();
+    confirmModal('Cloud sync is disabled in Device Settings. Enable and push '+state.squads.length+' squads now?','Enable Sync',{okLabel:'Enable & Push'}).then(ok=>{
+      if(!ok)return;
+      syncConfig.enabled=true;saveSyncConfig();
+      doPush();
+    });
+  }else{
+    doPush();
   }
-  let succeeded=0,failed=0;
-  const errors=[];
-  const promises=state.squads.map(sq=>{
-    return db.collection('squads').doc(sq.id).set({
-      id:sq.id,
-      region:sq.region||'',
-      group:sq.group||'',
-      players:sq.players.map(p=>({id:p.id,name:p.name,skills:p.skills||[]})),
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-      updatedBy:fbUid
-    },{merge:true}).then(()=>{succeeded++;}).catch(e=>{failed++;errors.push(sq.region+' / '+sq.group+': '+e.message);});
-  });
-  Promise.all(promises).then(()=>{
-    if(failed===0){
-      alert('✅ Pushed '+succeeded+' squad'+(succeeded!==1?'s':'')+' to cloud successfully');
-    }else{
-      alert('Pushed '+succeeded+' / '+state.squads.length+' squads.\n\nFailures:\n'+errors.slice(0,5).join('\n'));
-    }
-  });
 }
 window.pushSquadsToCloud=pushSquadsToCloud;
 
@@ -963,6 +990,70 @@ const initBowler=(n,id)=>({id,name:n,balls:0,runs:0,wickets:0,wides:0,noBalls:0,
 const overStr=(b,bpo=6)=>`${Math.floor(b/bpo)}.${b%bpo}`;
 const escHtml=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const uid=()=>Math.random().toString(36).slice(2,9);
+
+// ─── Custom Toast & Modals (replaces native alert/confirm/prompt) ────────────
+function toast(msg,type){
+  type=type||'info';
+  const c=document.getElementById('toast-container');if(!c)return;
+  const el=document.createElement('div');
+  el.className='toast '+type;
+  const icon=type==='success'?'✓':type==='error'?'✕':type==='warn'?'⚠':'ℹ';
+  el.innerHTML='<span style="font-size:16px;">'+icon+'</span><span>'+String(msg).replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</span>';
+  c.appendChild(el);
+  setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(-10px)';el.style.transition='all .25s';setTimeout(()=>el.remove(),250);},type==='error'?4500:2800);
+}
+window.toast=toast;
+
+function confirmModal(msg,title,opts){
+  return new Promise(resolve=>{
+    title=title||'Confirm';
+    opts=opts||{};
+    const okLabel=opts.okLabel||'OK';
+    const cancelLabel=opts.cancelLabel||'Cancel';
+    const danger=!!opts.danger;
+    const overlay=document.createElement('div');
+    overlay.className='confirm-modal';
+    overlay.innerHTML='<div class="confirm-sheet">'+
+      '<div class="confirm-title">'+escHtml(title)+'</div>'+
+      '<div class="confirm-msg">'+escHtml(msg)+'</div>'+
+      '<div class="confirm-actions">'+
+        '<button class="confirm-btn cancel" data-action="cancel">'+escHtml(cancelLabel)+'</button>'+
+        '<button class="confirm-btn '+(danger?'danger':'ok')+'" data-action="ok">'+escHtml(okLabel)+'</button>'+
+      '</div></div>';
+    document.body.appendChild(overlay);
+    const close=v=>{overlay.remove();resolve(v);};
+    overlay.querySelector('[data-action=ok]').onclick=()=>close(true);
+    overlay.querySelector('[data-action=cancel]').onclick=()=>close(false);
+    overlay.onclick=e=>{if(e.target===overlay)close(false);};
+  });
+}
+window.confirmModal=confirmModal;
+
+function promptModal(msg,defaultValue,title){
+  return new Promise(resolve=>{
+    title=title||'Enter value';
+    defaultValue=defaultValue||'';
+    const overlay=document.createElement('div');
+    overlay.className='confirm-modal';
+    overlay.innerHTML='<div class="confirm-sheet">'+
+      '<div class="confirm-title">'+escHtml(title)+'</div>'+
+      '<div class="confirm-msg">'+escHtml(msg)+'</div>'+
+      '<input class="confirm-input" type="text" value="'+escHtml(defaultValue)+'"/>'+
+      '<div class="confirm-actions">'+
+        '<button class="confirm-btn cancel" data-action="cancel">Cancel</button>'+
+        '<button class="confirm-btn ok" data-action="ok">OK</button>'+
+      '</div></div>';
+    document.body.appendChild(overlay);
+    const input=overlay.querySelector('input');
+    input.focus();input.select();
+    const close=v=>{overlay.remove();resolve(v);};
+    overlay.querySelector('[data-action=ok]').onclick=()=>close(input.value);
+    overlay.querySelector('[data-action=cancel]').onclick=()=>close(null);
+    input.onkeydown=e=>{if(e.key==='Enter')close(input.value);if(e.key==='Escape')close(null);};
+    overlay.onclick=e=>{if(e.target===overlay)close(null);};
+  });
+}
+window.promptModal=promptModal;
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let state={
@@ -1069,7 +1160,7 @@ window.exportCSV=exportCSV;
 
 // ─── Scoring actions ──────────────────────────────────────────────────────────
 function scoreRuns(runs){
-  if(!canScore()){alert('Match is locked by '+lockOwnerName()+'. You cannot score.');return;}
+  if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   let retiredName=null;
   updateInn(inn=>{
@@ -1110,7 +1201,7 @@ function scoreRuns(runs){
 window.scoreRuns=scoreRuns;
 
 function scoreExtra(type){
-  if(!canScore()){alert('Match is locked by '+lockOwnerName()+'. You cannot score.');return;}
+  if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
     const bw=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
@@ -1138,7 +1229,7 @@ function scoreExtra(type){
 window.scoreExtra=scoreExtra;
 
 function scoreWicket(outId,type,runs,fielder){
-  if(!canScore()){alert('Match is locked by '+lockOwnerName()+'. You cannot score.');return;}
+  if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
   const bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
     const bw=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
@@ -1227,9 +1318,9 @@ let editTeamData={name:'',players:[{id:uid(),name:''},{id:uid(),name:''},{id:uid
 
 function saveTeam(){
   const name=editTeamData.name.trim();
-  if(!name){alert('Enter a team name');return;}
+  if(!name){toast('Enter a team name','error');return;}
   const players=editTeamData.players.filter(p=>p.name.trim()).map(p=>({id:p.id,name:p.name.trim()}));
-  if(players.length<1){alert('Add at least one player');return;}
+  if(players.length<1){toast('Add at least one player','error');return;}
   const captainId=editTeamData.captainId;
   if(state.editTeamId){
     const idx=state.teams.findIndex(t=>t.id===state.editTeamId);
@@ -1244,11 +1335,13 @@ function saveTeam(){
 window.saveTeam=saveTeam;
 
 function deleteTeam(id){
-  if(!confirm('Delete this team?'))return;
-  state.teams=state.teams.filter(t=>t.id!==id);
-  persist();
-  if(fbReady&&db)db.collection('teams').doc(id).delete().catch(()=>{});
-  render();
+  confirmModal('Delete this team?','Delete Team',{danger:true,okLabel:'Delete'}).then(ok=>{
+    if(!ok)return;
+    state.teams=state.teams.filter(t=>t.id!==id);
+    persist();
+    if(fbReady&&db)db.collection('teams').doc(id).delete().catch(()=>{});
+    render();
+  });
 }
 window.deleteTeam=deleteTeam;
 
@@ -1353,7 +1446,7 @@ window.handleSquadNext=handleSquadNext;
 
 function saveAsScheduledMatch(){
   const d=setupData;
-  if(!d.teamA||!d.teamB){alert('Enter both team names');return;}
+  if(!d.teamA||!d.teamB){toast('Enter both team names','error');return;}
   const playersA=(d.playersA||[]).slice(0,d.sizeA).filter(p=>p&&p.trim());
   const playersB=(d.playersB||[]).slice(0,d.sizeB).filter(p=>p&&p.trim());
   const batting1st=d.tossChoice==='Bat'?(d.tossWinner==='A'?d.teamA:d.teamB):(d.tossWinner==='A'?d.teamB:d.teamA);
@@ -1389,7 +1482,7 @@ function saveAsScheduledMatch(){
   if(idx>=0)state.activeMatches[idx]=m;
   else{state.activeMatches=[m,...(state.activeMatches||[])];}
   setupData={};
-  alert(isEditing?'Match updated':'Match scheduled! Another coach can pick it up from Scheduled Matches.');
+  toast(isEditing?'Match updated':'Match scheduled! Another coach can pick it up from Scheduled Matches.','success');
   state.screen='scheduled_matches';render();
 }
 window.saveAsScheduledMatch=saveAsScheduledMatch;
@@ -1721,7 +1814,7 @@ function renderHome(){
 
 function startScheduledMatch(matchId){
   const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
-  if(!m){alert('Match not found');return;}
+  if(!m){toast('Match not found','error');return;}
   // If team has no players, send to setup screen to add them first
   if((m.playersA||[]).length<2||(m.playersB||[]).length<2){
     editScheduledMatch(matchId);
@@ -1738,7 +1831,7 @@ window.startScheduledMatch=startScheduledMatch;
 
 function editScheduledMatch(matchId){
   const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
-  if(!m){alert('Match not found');return;}
+  if(!m){toast('Match not found','error');return;}
   // Load match into setupData for editing
   setupData={
     step:0,
@@ -1763,10 +1856,12 @@ function editScheduledMatch(matchId){
 window.editScheduledMatch=editScheduledMatch;
 
 function deleteScheduledMatch(matchId){
-  if(!confirm('Delete this scheduled match?'))return;
-  state.activeMatches=(state.activeMatches||[]).filter(m=>m.matchId!==matchId);
-  if(db)db.collection('matches').doc(matchId).delete().catch(()=>{});
-  render();
+  confirmModal('Delete this scheduled match?','Delete Match',{danger:true,okLabel:'Delete'}).then(ok=>{
+    if(!ok)return;
+    state.activeMatches=(state.activeMatches||[]).filter(m=>m.matchId!==matchId);
+    if(db)db.collection('matches').doc(matchId).delete().catch(()=>{});
+    render();
+  });
 }
 window.deleteScheduledMatch=deleteScheduledMatch;
 
@@ -1843,7 +1938,7 @@ function renderScheduledMatches(){
 
 function resumeActiveMatch(matchId){
   const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
-  if(!m){alert('Match not found');return;}
+  if(!m){toast('Match not found','error');return;}
   state.match=m;
   state.currentInnings=m.innings&&m.innings[1]?(m.innings[1].complete?1:1):0;
   state.screen='scoring';
@@ -1859,7 +1954,7 @@ window.resumeActiveMatch=resumeActiveMatch;
 function startQuickMatch(){
   const a=document.getElementById('qs-teamA')?.value;
   const b=document.getElementById('qs-teamB')?.value;
-  if(a===b){alert('Select two different teams');return;}
+  if(a===b){toast('Select two different teams','error');return;}
   initSetup(a,b);state.screen='setup';render();
 }
 window.startQuickMatch=startQuickMatch;
@@ -2195,7 +2290,7 @@ function renderSetup(){
           <label class="form-label" style="color:var(--gold);">⚙️ Match Rules</label>
           ${renderRulesConfig(d.rules)}
         </div>
-        <button class="btn-primary" onclick="if(!setupData.teamA.trim()||!setupData.teamB.trim()){alert('Enter both team names');return;}setupData.step=1;render()">
+        <button class="btn-primary" onclick="if(!setupData.teamA.trim()||!setupData.teamB.trim()){toast('Enter both team names','error');return;}setupData.step=1;render()">
           Next: ${escHtml(d.teamA||'Team A')} Squad →
         </button>
         <button class="btn-secondary" style="width:100%;margin-top:8px;background:#fffbeb;border-color:#fde68a;color:#b45309;" onclick="saveAsScheduledMatch()">📅 Save as Scheduled (add players later)</button>
@@ -2814,7 +2909,7 @@ function renderViewNotesModal(data){
 
 // ─── Share Live Match (QR code for parents) ─────────────────────────────────
 function openShareModal(){
-  if(!state.match?.matchId){alert('Save match first');return;}
+  if(!state.match?.matchId){toast('Save match first','error');return;}
   // Force a sync so viewers can see the latest state
   syncMatchToFirestore(true);
   openModal('share',{});
@@ -2848,7 +2943,7 @@ function renderShareModal(){
 
 function copyShareUrl(url){
   if(navigator.clipboard){
-    navigator.clipboard.writeText(url).then(()=>alert('Link copied!')).catch(()=>{
+    navigator.clipboard.writeText(url).then(()=>toast('Link copied!','success')).catch(()=>{
       prompt('Copy this link:',url);
     });
   }else{
@@ -2869,8 +2964,8 @@ let transferUsers=[];
 let transferLoadStatus='idle'; // 'idle'|'loading'|'loaded'|'error'
 
 function openTransferModal(){
-  if(!state.match){alert('No active match');return;}
-  if(!canScore()){alert('Only the current scoring user can transfer the match');return;}
+  if(!state.match){toast('No active match','error');return;}
+  if(!canScore()){toast('Only the current scoring user can transfer the match','error');return;}
   transferUsers=[];transferLoadStatus='loading';
   openModal('transferLock',{});
   // Load users from Firestore
@@ -2894,31 +2989,40 @@ function openTransferModal(){
 window.openTransferModal=openTransferModal;
 
 function transferScoringTo(uid,email,name){
-  if(!confirm('Transfer scoring rights to '+name+'?\n\nYou will no longer be able to score this match unless they transfer it back.'))return;
-  state.match={...state.match,
-    scoringLockUid:uid,
-    scoringLockEmail:email,
-    scoringLockName:name,
-    scoringLockAt:new Date().toISOString(),
-  };
-  persist();syncMatchToFirestore(true);
-  closeModal();
-  alert('Scoring transferred to '+name);
-  render();
+  confirmModal('Transfer scoring rights to '+name+'? You will no longer be able to score this match unless they transfer it back.','Transfer Scoring',{okLabel:'Transfer'}).then(ok=>{
+    if(!ok)return;
+    state.match={...state.match,
+      scoringLockUid:uid,
+      scoringLockEmail:email,
+      scoringLockName:name,
+      scoringLockAt:new Date().toISOString(),
+    };
+    persist();syncMatchToFirestore(true);
+    closeModal();
+    toast('Scoring transferred to '+name,'success');
+    render();
+  });
 }
 window.transferScoringTo=transferScoringTo;
 
 function releaseLock(){
-  if(!confirm('Release the scoring lock? Anyone can then take over scoring this match.'))return;
-  state.match={...state.match,
-    scoringLockUid:null,scoringLockEmail:'',scoringLockName:'',scoringLockAt:null};
-  persist();syncMatchToFirestore(true);
-  closeModal();render();
+  confirmModal('Release the scoring lock? Anyone can then take over scoring this match.','Release Lock',{okLabel:'Release'}).then(ok=>{
+    if(!ok)return;
+    state.match={...state.match,
+      scoringLockUid:null,scoringLockEmail:'',scoringLockName:'',scoringLockAt:null};
+    persist();syncMatchToFirestore(true);
+    closeModal();render();
+  });
 }
 window.releaseLock=releaseLock;
 
 function takeLock(){
-  if(!confirm('Take scoring control of this match? The current locker ('+lockOwnerName()+') will lose scoring rights.'))return;
+  confirmModal('Take scoring control of this match? The current locker ('+lockOwnerName()+') will lose scoring rights.','Take Lock',{danger:true,okLabel:'Take Lock'}).then(ok=>{
+    if(!ok)return;
+    _takeLockInternal();
+  });
+}
+function _takeLockInternal(){
   state.match={...state.match,
     scoringLockUid:authUser?.uid||null,
     scoringLockEmail:authUser?.email||'',
@@ -3122,8 +3226,8 @@ function confirmNextBowler(){
   const bowlingPlayers=state.currentInnings===0?state.match.playersB:state.match.playersA;
 
   if(charlie){
-    if(!nextBowlerSelection.slot0||!nextBowlerSelection.slot1){alert('Select both bowlers');return;}
-    if(nextBowlerSelection.slot0===nextBowlerSelection.slot1){alert('Select two different bowlers');return;}
+    if(!nextBowlerSelection.slot0||!nextBowlerSelection.slot1){toast('Select both bowlers','error');return;}
+    if(nextBowlerSelection.slot0===nextBowlerSelection.slot1){toast('Select two different bowlers','error');return;}
     updateInn(inn=>{
       // Ensure bowlers exist in innings bowler list
       [nextBowlerSelection.slot0,nextBowlerSelection.slot1].forEach(name=>{
@@ -3138,7 +3242,7 @@ function confirmNextBowler(){
       return inn;
     });
   }else{
-    if(!nextBowlerSelection.slot0){alert('Select a bowler');return;}
+    if(!nextBowlerSelection.slot0){toast('Select a bowler','error');return;}
     updateInn(inn=>{
       let bw=inn.bowlers.find(b=>b.name===nextBowlerSelection.slot0);
       if(!bw){
@@ -3308,60 +3412,62 @@ function editSquad(id){
 window.editSquad=editSquad;
 
 function deleteSquad(id){
-  if(!confirm('Delete this squad?'))return;
-  state.squads=state.squads.filter(s=>s.id!==id);
-  persist();
-  if(isSyncEnabled()&&db)db.collection('squads').doc(id).delete().catch(()=>{});
-  render();
+  confirmModal('Delete this squad?','Delete Squad',{danger:true,okLabel:'Delete'}).then(ok=>{
+    if(!ok)return;
+    state.squads=state.squads.filter(s=>s.id!==id);
+    persist();
+    if(isSyncEnabled()&&db)db.collection('squads').doc(id).delete().catch(()=>{});
+    render();
+  });
 }
 window.deleteSquad=deleteSquad;
 
 function renameRegion(oldName){
-  const newName=prompt('Rename region "'+oldName+'" to:',oldName);
-  if(!newName||!newName.trim()||newName.trim()===oldName)return;
-  const trimmed=newName.trim();
-
-  // Check if a region with this name already exists (case-insensitive)
-  const existingRegions=[...new Set(state.squads.filter(s=>s.region!==oldName).map(s=>s.region).filter(Boolean))];
-  const conflict=existingRegions.find(r=>r.toLowerCase()===trimmed.toLowerCase());
-  if(conflict){
-    if(!confirm('Region "'+conflict+'" already exists.\n\nMerge all squads from "'+oldName+'" into "'+conflict+'"?\n\nThis will also check for duplicate training groups.'))return;
-    // Check for duplicate group names between the two regions
-    const oldGroups=state.squads.filter(s=>s.region===oldName).map(s=>s.group.toLowerCase());
-    const newGroups=state.squads.filter(s=>s.region===conflict).map(s=>s.group.toLowerCase());
-    const dups=oldGroups.filter(g=>newGroups.includes(g));
-    if(dups.length>0){
-      alert('Cannot merge: training group name conflict.\n\nThese groups exist in both regions: '+dups.join(', ')+'\n\nRename one set of groups first, then try again.');
-      return;
+  promptModal('New name for region "'+oldName+'":',oldName,'Rename Region').then(newName=>{
+    if(!newName||!newName.trim()||newName.trim()===oldName)return;
+    const trimmed=newName.trim();
+    const existingRegions=[...new Set(state.squads.filter(s=>s.region!==oldName).map(s=>s.region).filter(Boolean))];
+    const conflict=existingRegions.find(r=>r.toLowerCase()===trimmed.toLowerCase());
+    const doRename=()=>{
+      let count=0;
+      state.squads.forEach(sq=>{if(sq.region===oldName){sq.region=trimmed;count++;}});
+      if(count>0){
+        persist();syncSquadsToFirestore();
+        toast('Renamed '+count+' squad'+(count!==1?'s':''),'success');
+        render();
+      }
+    };
+    const doMerge=()=>{
+      const oldGroups=state.squads.filter(s=>s.region===oldName).map(s=>s.group.toLowerCase());
+      const newGroups=state.squads.filter(s=>s.region===conflict).map(s=>s.group.toLowerCase());
+      const dups=oldGroups.filter(g=>newGroups.includes(g));
+      if(dups.length>0){
+        toast('Cannot merge — duplicate groups: '+dups.join(', '),'error');
+        return;
+      }
+      let count=0;
+      state.squads.forEach(sq=>{if(sq.region===oldName){sq.region=conflict;count++;}});
+      persist();syncSquadsToFirestore();
+      toast('Merged '+count+' squad'+(count!==1?'s':'')+' into '+conflict,'success');
+      render();
+    };
+    if(conflict){
+      confirmModal('Region "'+conflict+'" already exists. Merge all squads from "'+oldName+'" into "'+conflict+'"?','Merge Regions',{okLabel:'Merge'}).then(ok=>{if(ok)doMerge();});
+    }else{
+      doRename();
     }
-    // Safe to merge — use the existing spelling
-    let count=0;
-    state.squads.forEach(sq=>{if(sq.region===oldName){sq.region=conflict;count++;}});
-    persist();syncSquadsToFirestore();
-    alert('Merged '+count+' squad'+(count!==1?'s':'')+' into "'+conflict+'"');
-    render();
-    return;
-  }
-
-  let count=0;
-  state.squads.forEach(sq=>{
-    if(sq.region===oldName){sq.region=trimmed;count++;}
   });
-  if(count>0){
-    persist();syncSquadsToFirestore();
-    alert('Renamed '+count+' squad'+(count!==1?'s':'')+' from "'+oldName+'" to "'+trimmed+'"');
-    render();
-  }
 }
 window.renameRegion=renameRegion;
 
 function renameGroup(squadId){
   const sq=state.squads.find(s=>s.id===squadId);if(!sq)return;
-  const newName=prompt('Rename training group "'+sq.group+'" to:',sq.group);
-  if(!newName||!newName.trim()||newName.trim()===sq.group)return;
-  sq.group=newName.trim();
-  persist();syncSquadsToFirestore();
-  render();
+  promptModal('New name for training group "'+sq.group+'":',sq.group,'Rename Group').then(newName=>{
+    if(!newName||!newName.trim()||newName.trim()===sq.group)return;
+    sq.group=newName.trim();
+    persist();syncSquadsToFirestore();
+    render();
+  });
 }
 window.renameGroup=renameGroup;
 
@@ -3369,40 +3475,36 @@ function saveSquad(){
   if(!editSquadData)return;
   let region=editSquadData.region.trim();
   let group=editSquadData.group.trim();
-  if(!region){alert('Enter a region name');return;}
-  if(!group){alert('Enter a training group name');return;}
+  if(!region){toast('Enter a region name','error');return;}
+  if(!group){toast('Enter a training group name','error');return;}
 
   // Normalize region: if a region exists with same name (case-insensitive),
-  // use the existing exact spelling to prevent duplicates like "Hampshire" vs "hampshire"
+  // automatically use the existing exact spelling to prevent duplicates
   const existingRegions=[...new Set(state.squads.filter(s=>s.id!==editSquadData.id).map(s=>s.region).filter(Boolean))];
   const matchingRegion=existingRegions.find(r=>r.toLowerCase()===region.toLowerCase());
   if(matchingRegion&&matchingRegion!==region){
-    if(!confirm('Region "'+matchingRegion+'" already exists.\n\nUse the existing spelling instead of "'+region+'"?\n\nClick OK to use "'+matchingRegion+'", Cancel to keep "'+region+'".')){
-      // User chose to keep their version — but this means we have two regions differing only in case. Warn.
-      alert('Note: You now have two regions with the same name in different casing. Consider renaming one to merge them.');
-    }else{
-      region=matchingRegion;
-      editSquadData.region=region;
-    }
+    region=matchingRegion;
+    editSquadData.region=region;
+    toast('Using existing region: '+matchingRegion,'info');
   }
 
   // Normalize group within the same region (case-insensitive)
   const existingGroupsInRegion=state.squads.filter(s=>s.id!==editSquadData.id&&s.region===region).map(s=>s.group);
   const matchingGroup=existingGroupsInRegion.find(g=>g.toLowerCase()===group.toLowerCase());
   if(matchingGroup&&matchingGroup!==group){
-    alert('A training group named "'+matchingGroup+'" already exists in '+region+'. Use a different name.');
+    toast('A training group named "'+matchingGroup+'" already exists in '+region+'. Use a different name.','error');
     return;
   }
 
   // Prevent exact duplicate (region + group already exists)
   const dup=state.squads.find(s=>s.id!==editSquadData.id&&s.region===region&&s.group===group);
   if(dup){
-    alert('A squad for "'+group+'" in "'+region+'" already exists. Edit that squad instead.');
+    toast('A squad for "'+group+'" in "'+region+'" already exists. Edit that squad instead.','error');
     return;
   }
 
   const players=editSquadData.players.filter(p=>p.name.trim()).map(p=>({id:p.id,name:p.name.trim(),skills:p.skills||[]}));
-  if(players.length<1){alert('Add at least one player');return;}
+  if(players.length<1){toast('Add at least one player','error');return;}
   const sq={id:editSquadData.id,region,group,players};
   const idx=state.squads.findIndex(s=>s.id===sq.id);
   if(idx>=0)state.squads[idx]=sq;else state.squads.push(sq);
