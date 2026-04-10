@@ -3259,6 +3259,29 @@ function renameRegion(oldName){
   const newName=prompt('Rename region "'+oldName+'" to:',oldName);
   if(!newName||!newName.trim()||newName.trim()===oldName)return;
   const trimmed=newName.trim();
+
+  // Check if a region with this name already exists (case-insensitive)
+  const existingRegions=[...new Set(state.squads.filter(s=>s.region!==oldName).map(s=>s.region).filter(Boolean))];
+  const conflict=existingRegions.find(r=>r.toLowerCase()===trimmed.toLowerCase());
+  if(conflict){
+    if(!confirm('Region "'+conflict+'" already exists.\n\nMerge all squads from "'+oldName+'" into "'+conflict+'"?\n\nThis will also check for duplicate training groups.'))return;
+    // Check for duplicate group names between the two regions
+    const oldGroups=state.squads.filter(s=>s.region===oldName).map(s=>s.group.toLowerCase());
+    const newGroups=state.squads.filter(s=>s.region===conflict).map(s=>s.group.toLowerCase());
+    const dups=oldGroups.filter(g=>newGroups.includes(g));
+    if(dups.length>0){
+      alert('Cannot merge: training group name conflict.\n\nThese groups exist in both regions: '+dups.join(', ')+'\n\nRename one set of groups first, then try again.');
+      return;
+    }
+    // Safe to merge — use the existing spelling
+    let count=0;
+    state.squads.forEach(sq=>{if(sq.region===oldName){sq.region=conflict;count++;}});
+    persist();syncSquadsToFirestore();
+    alert('Merged '+count+' squad'+(count!==1?'s':'')+' into "'+conflict+'"');
+    render();
+    return;
+  }
+
   let count=0;
   state.squads.forEach(sq=>{
     if(sq.region===oldName){sq.region=trimmed;count++;}
@@ -3283,10 +3306,40 @@ window.renameGroup=renameGroup;
 
 function saveSquad(){
   if(!editSquadData)return;
-  const region=editSquadData.region.trim();
-  const group=editSquadData.group.trim();
+  let region=editSquadData.region.trim();
+  let group=editSquadData.group.trim();
   if(!region){alert('Enter a region name');return;}
   if(!group){alert('Enter a training group name');return;}
+
+  // Normalize region: if a region exists with same name (case-insensitive),
+  // use the existing exact spelling to prevent duplicates like "Hampshire" vs "hampshire"
+  const existingRegions=[...new Set(state.squads.filter(s=>s.id!==editSquadData.id).map(s=>s.region).filter(Boolean))];
+  const matchingRegion=existingRegions.find(r=>r.toLowerCase()===region.toLowerCase());
+  if(matchingRegion&&matchingRegion!==region){
+    if(!confirm('Region "'+matchingRegion+'" already exists.\n\nUse the existing spelling instead of "'+region+'"?\n\nClick OK to use "'+matchingRegion+'", Cancel to keep "'+region+'".')){
+      // User chose to keep their version — but this means we have two regions differing only in case. Warn.
+      alert('Note: You now have two regions with the same name in different casing. Consider renaming one to merge them.');
+    }else{
+      region=matchingRegion;
+      editSquadData.region=region;
+    }
+  }
+
+  // Normalize group within the same region (case-insensitive)
+  const existingGroupsInRegion=state.squads.filter(s=>s.id!==editSquadData.id&&s.region===region).map(s=>s.group);
+  const matchingGroup=existingGroupsInRegion.find(g=>g.toLowerCase()===group.toLowerCase());
+  if(matchingGroup&&matchingGroup!==group){
+    alert('A training group named "'+matchingGroup+'" already exists in '+region+'. Use a different name.');
+    return;
+  }
+
+  // Prevent exact duplicate (region + group already exists)
+  const dup=state.squads.find(s=>s.id!==editSquadData.id&&s.region===region&&s.group===group);
+  if(dup){
+    alert('A squad for "'+group+'" in "'+region+'" already exists. Edit that squad instead.');
+    return;
+  }
+
   const players=editSquadData.players.filter(p=>p.name.trim()).map(p=>({id:p.id,name:p.name.trim(),skills:p.skills||[]}));
   if(players.length<1){alert('Add at least one player');return;}
   const sq={id:editSquadData.id,region,group,players};
