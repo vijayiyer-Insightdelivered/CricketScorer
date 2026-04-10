@@ -40,6 +40,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600&display=swap');
 :root{
@@ -2894,6 +2895,7 @@ function renderModal(modal){
   else if(modal.type==='viewnotes')inner=renderViewNotesModal(modal.data);
   else if(modal.type==='share')inner=renderShareModal();
   else if(modal.type==='transferLock')inner=renderTransferLockModal();
+  else if(modal.type==='uploadPreview')inner=renderUploadPreviewModal();
   const noClose=modal.type==='newbatter'||modal.type==='nextbowler';
   return `<div class="modal-overlay" onclick="if(event.target===this&&!${noClose})closeModal()">${inner}</div>`;
 }
@@ -3611,6 +3613,196 @@ const PLAYER_SKILLS=[
 ];
 let editSquadData=null; // {id,region,group,players:[{id,name,skills:[]}]}
 
+// ─── Excel/CSV Upload for Master Squads ──────────────────────────────────────
+function downloadSquadTemplate(){
+  if(typeof XLSX==='undefined'){toast('Excel library not loaded, try again','error');return;}
+  const rows=[
+    ['Region','Training Group','Player Name','Bat','WK','Spin','Seam','Pace','All-rounder'],
+    ['Hampshire','U11 Development','Alex Smith','Y','','','Y','',''],
+    ['Hampshire','U11 Development','Ben Jones','Y','Y','','','',''],
+    ['Hampshire','U11 Development','Charlie Brown','','','Y','','',''],
+    ['Hampshire','U12 Pathway','Dan Taylor','Y','','','','Y',''],
+    ['Surrey','U11 Development','Ed Green','','','','Y','','Y'],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:15},{wch:20},{wch:22},{wch:6},{wch:6},{wch:6},{wch:6},{wch:6},{wch:12}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Players');
+  // Add instructions sheet
+  const instRows=[
+    ['PitchUp — Master Squad Upload Template'],
+    [],
+    ['INSTRUCTIONS:'],
+    ['1. Fill in the Players sheet with your squad data'],
+    ['2. Region and Training Group identify which squad the player belongs to'],
+    ['3. Players with the same Region + Training Group go into one squad'],
+    ['4. Mark skills with Y (or any non-empty value) to indicate a player has that skill'],
+    ['5. Leave skill cells empty if the player does not have that skill'],
+    ['6. Save as .xlsx or .csv'],
+    ['7. Upload from the Master Squads screen in PitchUp'],
+    [],
+    ['SKILL KEYS:'],
+    ['BAT = Batter'],
+    ['WK = Wicket-Keeper'],
+    ['SPIN = Spin Bowler'],
+    ['SEAM = Seam Bowler'],
+    ['PACE = Pace Bowler'],
+    ['All-rounder = Batting + Bowling all-rounder'],
+  ];
+  const instWs=XLSX.utils.aoa_to_sheet(instRows);
+  instWs['!cols']=[{wch:60}];
+  XLSX.utils.book_append_sheet(wb,instWs,'Instructions');
+  XLSX.writeFile(wb,'pitchup-squad-template.xlsx');
+  toast('Template downloaded','success');
+}
+window.downloadSquadTemplate=downloadSquadTemplate;
+
+function handleSquadUpload(fileInput){
+  const file=fileInput.files[0];
+  if(!file){return;}
+  if(typeof XLSX==='undefined'){toast('Excel library not loaded','error');return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const data=new Uint8Array(e.target.result);
+      const wb=XLSX.read(data,{type:'array'});
+      const sheetName=wb.SheetNames.find(n=>n.toLowerCase().includes('player'))||wb.SheetNames[0];
+      const ws=wb.Sheets[sheetName];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      parseSquadUpload(rows,file.name);
+    }catch(err){
+      toast('Failed to parse file: '+err.message,'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  fileInput.value=''; // allow re-uploading same file
+}
+window.handleSquadUpload=handleSquadUpload;
+
+function parseSquadUpload(rows,filename){
+  if(!rows||rows.length<2){toast('File is empty or has no data rows','error');return;}
+  // Find header row
+  let headerIdx=0;
+  for(let i=0;i<Math.min(5,rows.length);i++){
+    const cellsLower=rows[i].map(c=>String(c||'').toLowerCase());
+    if(cellsLower.some(c=>c.includes('region'))&&cellsLower.some(c=>c.includes('player'))){
+      headerIdx=i;break;
+    }
+  }
+  const header=rows[headerIdx].map(c=>String(c||'').trim().toLowerCase());
+  const colRegion=header.findIndex(c=>c.includes('region'));
+  const colGroup=header.findIndex(c=>c.includes('group')||c.includes('training'));
+  const colName=header.findIndex(c=>c.includes('player')||c.includes('name'));
+  if(colRegion<0||colGroup<0||colName<0){
+    toast('Missing required columns: Region, Training Group, Player Name','error');
+    return;
+  }
+  // Skill columns (fuzzy match)
+  const skillMap={BAT:['bat','batter','batting'],WK:['wk','keeper','wicket'],SPIN:['spin'],SEAM:['seam'],PACE:['pace','fast'],ALRND:['all-rounder','allrounder','all rounder','all']};
+  const skillCols={};
+  Object.keys(skillMap).forEach(key=>{
+    const idx=header.findIndex(c=>skillMap[key].some(k=>c===k||c.startsWith(k+' ')||c.startsWith(k)));
+    if(idx>=0)skillCols[key]=idx;
+  });
+
+  // Parse rows into squad groups
+  const squadMap={}; // key: region|group -> {region,group,players:[]}
+  let skipped=0;
+  for(let i=headerIdx+1;i<rows.length;i++){
+    const r=rows[i];if(!r)continue;
+    const region=String(r[colRegion]||'').trim();
+    const group=String(r[colGroup]||'').trim();
+    const name=String(r[colName]||'').trim();
+    if(!region||!group||!name){skipped++;continue;}
+    const key=region+'|'+group;
+    if(!squadMap[key])squadMap[key]={region,group,players:[]};
+    const skills=[];
+    Object.keys(skillCols).forEach(key2=>{
+      const val=String(r[skillCols[key2]]||'').trim().toLowerCase();
+      if(val&&val!=='n'&&val!=='no'&&val!=='0'&&val!=='false')skills.push(key2);
+    });
+    squadMap[key].players.push({id:uid(),name,skills});
+  }
+  const newSquads=Object.values(squadMap);
+  if(newSquads.length===0){
+    toast('No valid rows found in file','error');
+    return;
+  }
+  // Show preview/confirmation
+  _uploadPreview={filename,squads:newSquads,skipped,totalPlayers:newSquads.reduce((s,sq)=>s+sq.players.length,0)};
+  openModal('uploadPreview',{});
+}
+
+let _uploadPreview=null;
+
+function confirmSquadUpload(mergeMode){
+  if(!_uploadPreview)return;
+  const {squads:newSquads}=_uploadPreview;
+  let merged=0,created=0;
+  newSquads.forEach(ns=>{
+    // Match existing squad by region+group (case-insensitive)
+    const existing=state.squads.find(s=>s.region.toLowerCase()===ns.region.toLowerCase()&&s.group.toLowerCase()===ns.group.toLowerCase());
+    if(existing){
+      if(mergeMode==='replace'){
+        // Replace all players
+        existing.players=ns.players;
+      }else{
+        // Merge: add new players, skip duplicates
+        ns.players.forEach(np=>{
+          const dup=existing.players.find(p=>p.name.toLowerCase()===np.name.toLowerCase());
+          if(!dup){
+            existing.players.push(np);
+          }else if(np.skills.length>0){
+            // Merge skills
+            dup.skills=[...new Set([...(dup.skills||[]),...np.skills])];
+          }
+        });
+      }
+      merged++;
+    }else{
+      state.squads.push({id:'sq_'+uid(),region:ns.region,group:ns.group,players:ns.players});
+      created++;
+    }
+  });
+  persist();syncSquadsToFirestore();
+  closeModal();
+  _uploadPreview=null;
+  toast('Imported: '+created+' new, '+merged+' updated','success');
+  render();
+}
+window.confirmSquadUpload=confirmSquadUpload;
+
+function renderUploadPreviewModal(){
+  if(!_uploadPreview)return '';
+  const {filename,squads,skipped,totalPlayers}=_uploadPreview;
+  const sampleSquads=squads.slice(0,3);
+  return `<div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📥 Import Preview</div>
+    <div class="modal-sub">${escHtml(filename)}</div>
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px;margin-bottom:12px;">
+      <div style="font-family:var(--fu);font-size:13px;color:var(--grass);font-weight:700;">Found ${totalPlayers} player${totalPlayers!==1?'s':''} in ${squads.length} squad${squads.length!==1?'s':''}</div>
+      ${skipped>0?`<div style="font-size:11px;color:var(--home-muted);margin-top:2px;">${skipped} row${skipped!==1?'s':''} skipped (missing region/group/name)</div>`:''}
+    </div>
+    <div style="max-height:240px;overflow-y:auto;margin-bottom:12px;">
+      ${squads.map(sq=>{
+        const exists=state.squads.find(s=>s.region.toLowerCase()===sq.region.toLowerCase()&&s.group.toLowerCase()===sq.group.toLowerCase());
+        return `<div style="background:#f8fafc;border:1px solid var(--home-border);border-left:3px solid ${exists?'#d97706':'var(--grass)'};border-radius:8px;padding:8px 10px;margin-bottom:6px;">
+          <div style="font-family:var(--fu);font-size:12px;font-weight:700;color:var(--home-text);">📍 ${escHtml(sq.region)} · ${escHtml(sq.group)}</div>
+          <div style="font-size:11px;color:var(--home-muted);margin-top:2px;">${sq.players.length} players${exists?' · <span style="color:#b45309;font-weight:700;">existing squad</span>':' · <span style="color:var(--grass);font-weight:700;">new squad</span>'}</div>
+          <div style="font-size:10px;color:var(--home-muted);margin-top:3px;">${sq.players.slice(0,4).map(p=>escHtml(p.name)).join(', ')}${sq.players.length>4?' +'+(sq.players.length-4)+' more':''}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);margin-bottom:10px;line-height:1.5;"><strong>Merge</strong> adds new players to existing squads (skips duplicates, merges skills).<br><strong>Replace</strong> wipes existing players and uses only the uploaded ones.</div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn-primary" style="flex:1;" onclick="confirmSquadUpload('merge')">Merge</button>
+      <button class="btn-primary" style="flex:1;background:#d97706;" onclick="confirmSquadUpload('replace')">Replace</button>
+    </div>
+    <button class="modal-cancel" onclick="_uploadPreview=null;closeModal()">Cancel</button>
+  </div>`;
+}
+
 function newSquad(){
   editSquadData={id:uid(),region:'',group:'',players:[{id:uid(),name:'',skills:[]},{id:uid(),name:'',skills:[]},{id:uid(),name:'',skills:[]}]};
   state.screen='edit_squad';render();
@@ -3800,9 +3992,20 @@ function renderSquads(){
     <div class="screen-inner light">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px;">
         <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;font-weight:600;">Regions & Training Groups (${squads.length})</div>
-        <div style="display:flex;gap:8px;">
-          <button data-action="push-squads" onclick="pushSquadsToCloud()" style="background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:5px 12px;border-radius:7px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">⬆ Push to Cloud</button>
-          <button data-action="refresh-squads" onclick="reloadSquads()" style="background:#f0fdf4;border:1px solid #bbf7d0;color:var(--grass);padding:5px 12px;border-radius:7px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button data-action="push-squads" onclick="pushSquadsToCloud()" style="background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:5px 10px;border-radius:7px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">⬆ Push</button>
+          <button data-action="refresh-squads" onclick="reloadSquads()" style="background:#f0fdf4;border:1px solid #bbf7d0;color:var(--grass);padding:5px 10px;border-radius:7px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+        </div>
+      </div>
+      <div style="background:#fffbeb;border:1.5px solid #fde68a;border-radius:12px;padding:10px 12px;margin-bottom:14px;">
+        <div style="font-family:var(--fu);font-size:11px;font-weight:700;color:#b45309;letter-spacing:1px;margin-bottom:6px;">📊 BULK UPLOAD</div>
+        <div style="font-size:11px;color:var(--home-muted);margin-bottom:8px;font-family:var(--fu);">Import multiple players from an Excel/CSV file</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button onclick="downloadSquadTemplate()" style="flex:1;min-width:140px;background:#fff;border:1px solid #fde68a;color:#b45309;padding:8px;border-radius:8px;font-family:var(--fu);font-size:11px;font-weight:700;cursor:pointer;">📥 Download Template</button>
+          <label style="flex:1;min-width:140px;background:linear-gradient(135deg,#d97706,#b45309);border:none;color:#fff;padding:8px;border-radius:8px;font-family:var(--fu);font-size:11px;font-weight:700;cursor:pointer;text-align:center;">
+            📤 Upload Excel/CSV
+            <input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleSquadUpload(this)"/>
+          </label>
         </div>
       </div>
       ${content}
