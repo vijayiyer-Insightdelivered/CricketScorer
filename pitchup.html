@@ -914,6 +914,37 @@ function reloadSquads(){
 }
 window.reloadSquads=reloadSquads;
 
+function pushSquadsToCloud(){
+  if(!db){alert('Not connected to cloud');return;}
+  if(!fbReady){alert('Firebase not ready — wait a moment and retry');return;}
+  if(!authUser){alert('You must be signed in to push squads');return;}
+  if(state.squads.length===0){alert('No local squads to push');return;}
+  if(!isSyncEnabled()){
+    if(!confirm('Cloud sync is disabled in Device Settings. Enable it temporarily and push '+state.squads.length+' squads?'))return;
+    syncConfig.enabled=true;saveSyncConfig();
+  }
+  let succeeded=0,failed=0;
+  const errors=[];
+  const promises=state.squads.map(sq=>{
+    return db.collection('squads').doc(sq.id).set({
+      id:sq.id,
+      region:sq.region||'',
+      group:sq.group||'',
+      players:sq.players.map(p=>({id:p.id,name:p.name,skills:p.skills||[]})),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy:fbUid
+    },{merge:true}).then(()=>{succeeded++;}).catch(e=>{failed++;errors.push(sq.region+' / '+sq.group+': '+e.message);});
+  });
+  Promise.all(promises).then(()=>{
+    if(failed===0){
+      alert('✅ Pushed '+succeeded+' squad'+(succeeded!==1?'s':'')+' to cloud successfully');
+    }else{
+      alert('Pushed '+succeeded+' / '+state.squads.length+' squads.\n\nFailures:\n'+errors.slice(0,5).join('\n'));
+    }
+  });
+}
+window.pushSquadsToCloud=pushSquadsToCloud;
+
 // ─── Device ID (stable per browser) ──────────────────────────────────────────
 function getDeviceId(){
   let id=localStorage.getItem('pitchup_device_id');
@@ -3447,9 +3478,12 @@ function renderSquads(){
       <button onclick="newSquad()" style="background:linear-gradient(135deg,#d97706,#b45309);border:none;border-radius:9px;color:#fff;padding:7px 14px;cursor:pointer;font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.5px;">+ ADD</button>
     </div>
     <div class="screen-inner light">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px;">
         <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;font-weight:600;">Regions & Training Groups (${squads.length})</div>
-        <button onclick="reloadSquads()" style="background:none;border:none;color:var(--grass2);font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+        <div style="display:flex;gap:8px;">
+          <button onclick="pushSquadsToCloud()" style="background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:4px 10px;border-radius:7px;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;">⬆ Push to Cloud</button>
+          <button onclick="reloadSquads()" style="background:none;border:none;color:var(--grass2);font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+        </div>
       </div>
       ${content}
       <button class="light-btn-primary" style="margin-top:8px;background:linear-gradient(135deg,#d97706,#b45309);" onclick="newSquad()">+ Add New Squad</button>
