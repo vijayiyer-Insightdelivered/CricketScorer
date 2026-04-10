@@ -2077,6 +2077,7 @@ function renderEditTeam(){
         <div style="font-size:11px;color:var(--home-muted);margin-bottom:12px;font-family:'Rajdhani',sans-serif;">Min 2 · Max 15 · Pick from squads or add manually</div>
         ${playerRows}
         <button class="add-player-btn" onclick="addTeamPlayer()">+ Add Player Manually</button>
+        ${editTeamData.players.filter(p=>p.name.trim()).length>0?`<button onclick="clearAllTeamPlayers()" style="width:100%;margin-top:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:9px;color:#dc2626;padding:9px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">🗑 Clear All Players</button>`:''}
       </div>
       ${(()=>{
         // Team balance analysis
@@ -2356,14 +2357,19 @@ function renderSetup(){
   const players=isA?d.playersA:d.playersB;
   const size=isA?d.sizeA:d.sizeB;
   const teamName=escHtml(isA?d.teamA:d.teamB);
+  const filledCount=players.slice(0,size).filter(p=>p&&p.trim()).length;
   let sq='';
   for(let i=0;i<size;i++){
-    sq+=`<div class="squad-row" style="display:flex;align-items:center;gap:9px;margin-bottom:7px;">
+    const hasName=players[i]&&players[i].trim();
+    sq+=`<div class="squad-row" style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">
       <span style="color:var(--home-muted);font-size:11px;width:20px;text-align:right;font-family:'Rajdhani',sans-serif;">${i+1}</span>
       <input style="flex:1;background:#fff;border:1px solid var(--home-border);border-radius:9px;color:var(--home-text);padding:9px 12px;font-size:13px;font-family:'Source Sans 3',sans-serif;"
         value="${escHtml(players[i]||'')}" placeholder="Player ${i+1}" oninput="updateSetupPlayer('${isA?'A':'B'}',${i},this.value)" onchange="updateSetupPlayer('${isA?'A':'B'}',${i},this.value)"/>
+      ${hasName?`<button onclick="clearSetupPlayer('${isA?'A':'B'}',${i})" title="Remove this player" style="background:#fef2f2;border:1px solid #fecaca;border-radius:7px;color:#dc2626;width:30px;height:30px;cursor:pointer;font-size:13px;flex-shrink:0;">✕</button>`:'<span style="width:30px;flex-shrink:0;"></span>'}
     </div>`;
   }
+  // Clear-all button row
+  const clearRow=filledCount>0?`<button onclick="clearAllSetupPlayers('${isA?'A':'B'}')" style="width:100%;margin-top:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:9px;color:#dc2626;padding:9px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">🗑 Clear All ${filledCount} Player${filledCount!==1?'s':''}</button>`:'';
   return `<div class="screen dark active">
     <div class="topbar dark">
       <button class="topbar-back" onclick="setupData.step=${d.step===2?1:0};render()">←</button>
@@ -2375,8 +2381,9 @@ function renderSetup(){
       </div>
     </div>
     <div class="screen-inner">
-      <div style="font-size:11px;color:var(--home-muted);margin-bottom:12px;font-family:'Rajdhani',sans-serif;letter-spacing:.5px;">${size} players · up to ${size} can bat</div>
+      <div style="font-size:11px;color:var(--home-muted);margin-bottom:12px;font-family:'Rajdhani',sans-serif;letter-spacing:.5px;">${size} slots · ${filledCount} filled · up to ${size} can bat</div>
       ${sq}
+      ${clearRow}
       ${renderSetupSquadPicker(isA?'A':'B')}
       <div class="nav-row" style="margin-top:14px;">
         <button class="btn-secondary" onclick="setupData.step=${d.step===2?1:0};render()">← Back</button>
@@ -2390,6 +2397,36 @@ function renderSetup(){
 }
 
 // Add player to setup squad from master squad
+function clearAllTeamPlayers(){
+  confirmModal('Clear all players from this team?','Clear Players',{danger:true,okLabel:'Clear All'}).then(ok=>{
+    if(!ok)return;
+    editTeamData.players.forEach(p=>{p.name='';});
+    editTeamData.captainId=null;
+    render();
+    toast('All players cleared','success');
+  });
+}
+window.clearAllTeamPlayers=clearAllTeamPlayers;
+
+function clearSetupPlayer(side,idx){
+  const arr=side==='A'?setupData.playersA:setupData.playersB;
+  if(arr[idx]){arr[idx]='';render();}
+}
+window.clearSetupPlayer=clearSetupPlayer;
+
+function clearAllSetupPlayers(side){
+  const arr=side==='A'?setupData.playersA:setupData.playersB;
+  const sizeKey=side==='A'?'sizeA':'sizeB';
+  const size=setupData[sizeKey];
+  confirmModal('Clear all '+size+' player slots? You can pick a fresh set from the squad.','Clear Players',{danger:true,okLabel:'Clear All'}).then(ok=>{
+    if(!ok)return;
+    for(let i=0;i<size;i++)arr[i]='';
+    render();
+    toast('All players cleared','success');
+  });
+}
+window.clearAllSetupPlayers=clearAllSetupPlayers;
+
 function addSetupPlayerFromSquad(side,name){
   const arr=side==='A'?setupData.playersA:setupData.playersB;
   const sizeKey=side==='A'?'sizeA':'sizeB';
