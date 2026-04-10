@@ -1702,6 +1702,7 @@ function renderHome(){
             <div class="match-meta">${score} · ${isMine?'<span style="color:var(--grass);font-weight:700;">● You are scoring</span>':isLocked?'<span style="color:#dc2626;font-weight:700;">🔒 Locked by '+escHtml(m.scoringLockName||m.scoringLockEmail||'another user')+'</span>':'<span style="color:#d97706;font-weight:700;">No lock</span>'}</div>
           </div>
           <button class="match-csv" style="background:${isMine?'#f0fdf4':isLocked?'#fef2f2':'#fffbeb'};border-color:${isMine?'#bbf7d0':isLocked?'#fecaca':'#fde68a'};color:${isMine?'var(--grass)':isLocked?'#dc2626':'#b45309'};" onclick="resumeActiveMatch('${m.matchId}')">${isMine?'▶ Resume':isLocked?'👁 View':'▶ Take'}</button>
+          ${isAdmin()?`<button class="match-csv" style="background:#fef2f2;border-color:#fecaca;color:#dc2626;" onclick="deleteActiveMatch('${m.matchId}')" title="Delete match (admin only)">🗑</button>`:''}
         </div>`;
       }).join('')}
     </div>`;
@@ -1742,6 +1743,7 @@ function renderHome(){
           </div>
           ${isAdmin()?`<button class="match-csv" style="background:#fffbeb;border-color:#fde68a;color:#b45309;" onclick="editSavedMatch(${i})">✏️ Edit</button>`:''}
           <button class="match-csv" onclick="exportCSV(state.savedMatches[${i}])">📥 CSV</button>
+          ${isAdmin()?`<button class="match-csv" style="background:#fef2f2;border-color:#fecaca;color:#dc2626;" onclick="deleteSavedMatch(${i})" title="Delete match (admin only)">🗑</button>`:''}
         </div>`;}).join('')}
     </div>`;
   }
@@ -1887,6 +1889,34 @@ function deleteScheduledMatch(matchId){
     render();
   });
 }
+
+function deleteActiveMatch(matchId){
+  if(!isAdmin()){toast('Only admins can delete matches','error');return;}
+  const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
+  if(!m)return;
+  confirmModal('Delete the active match "'+m.teamA+' vs '+m.teamB+'"? This cannot be undone.','Delete Active Match',{danger:true,okLabel:'Delete'}).then(ok=>{
+    if(!ok)return;
+    state.activeMatches=(state.activeMatches||[]).filter(x=>x.matchId!==matchId);
+    if(db)db.collection('matches').doc(matchId).delete().catch(()=>{});
+    toast('Match deleted','success');
+    render();
+  });
+}
+window.deleteActiveMatch=deleteActiveMatch;
+
+function deleteSavedMatch(idx){
+  if(!isAdmin()){toast('Only admins can delete matches','error');return;}
+  const m=state.savedMatches[idx];if(!m)return;
+  confirmModal('Delete the completed match "'+m.teamA+' vs '+m.teamB+'"? This cannot be undone.','Delete Match',{danger:true,okLabel:'Delete'}).then(ok=>{
+    if(!ok)return;
+    state.savedMatches.splice(idx,1);
+    persist();
+    if(m.matchId&&db)db.collection('matches').doc(m.matchId).delete().catch(()=>{});
+    toast('Match deleted','success');
+    render();
+  });
+}
+window.deleteSavedMatch=deleteSavedMatch;
 window.deleteScheduledMatch=deleteScheduledMatch;
 
 function refreshScheduledMatches(){
