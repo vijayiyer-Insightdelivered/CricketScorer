@@ -745,6 +745,10 @@ function syncMatchToFirestore(force){
       deliveries:inn.deliveries.map(d=>({...d}))
     }:null),
     playerNotes:(m.playerNotes||[]).map(n=>({...n})),
+    scoringLockUid:m.scoringLockUid||null,
+    scoringLockEmail:m.scoringLockEmail||'',
+    scoringLockName:m.scoringLockName||'',
+    scoringLockAt:m.scoringLockAt||null,
     complete:!!m.complete,date:m.date||null,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid,deviceId:getDeviceId()
@@ -792,6 +796,10 @@ function syncMatchDocToFirestore(m){
       deliveries:inn.deliveries.map(d=>({...d}))
     }:null),
     playerNotes:(m.playerNotes||[]).map(n=>({...n})),
+    scoringLockUid:m.scoringLockUid||null,
+    scoringLockEmail:m.scoringLockEmail||'',
+    scoringLockName:m.scoringLockName||'',
+    scoringLockAt:m.scoringLockAt||null,
     complete:!!m.complete,date:m.date||null,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid
@@ -855,6 +863,13 @@ function loadFromFirestore(){
     state.savedMatches=merged.slice(0,20);
     persist();render();
   }).catch(()=>{});
+  // Load in-progress (active) matches from Firestore
+  db.collection('matches').where('complete','==',false).limit(20).get().then(snap=>{
+    const fbActive=[];
+    snap.forEach(doc=>fbActive.push(doc.data()));
+    state.activeMatches=fbActive;
+    render();
+  }).catch(()=>{});
   // Load squads from Firestore (merge with local)
   db.collection('squads').get().then(snap=>{
     const fbSquads=[];
@@ -890,6 +905,7 @@ let state={
   match:null,
   currentInnings:0,
   savedMatches:[],
+  activeMatches:[],     // in-progress matches from Firestore
   teams:[],             // [{id,name,players:[{id,name}]}]
   squads:[],            // [{id,region,group,players:[{id,name}]}]
   modal:null,
@@ -913,6 +929,15 @@ function getInn(){return state.match?.innings?.[state.currentInnings];}
 function getRules(){return state.match?.rules||DEFAULT_RULES;}
 function getBpo(){return getRules().ballsPerOver||6;}
 function isCharlie(){return (state.match?.bowlingMode||'charlie')==='charlie';}
+// Returns true if current user is the one locked to score
+function canScore(){
+  const m=state.match;if(!m)return false;
+  if(!m.scoringLockUid)return true; // unlocked — anyone can score
+  return m.scoringLockUid===authUser?.uid;
+}
+function lockOwnerName(){
+  return state.match?.scoringLockName||state.match?.scoringLockEmail||'another user';
+}
 // Returns true at an over boundary where we should prompt for next bowler(s)
 // Standard: every over. Charlie: every 2 overs (pair boundary).
 function isOverBoundary(inn){
@@ -979,6 +1004,7 @@ window.exportCSV=exportCSV;
 
 // ─── Scoring actions ──────────────────────────────────────────────────────────
 function scoreRuns(runs){
+  if(!canScore()){alert('Match is locked by '+lockOwnerName()+'. You cannot score.');return;}
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   let retiredName=null;
   updateInn(inn=>{
@@ -1019,6 +1045,7 @@ function scoreRuns(runs){
 window.scoreRuns=scoreRuns;
 
 function scoreExtra(type){
+  if(!canScore()){alert('Match is locked by '+lockOwnerName()+'. You cannot score.');return;}
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
     const bw=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
@@ -1046,6 +1073,7 @@ function scoreExtra(type){
 window.scoreExtra=scoreExtra;
 
 function scoreWicket(outId,type,runs,fielder){
+  if(!canScore()){alert('Match is locked by '+lockOwnerName()+'. You cannot score.');return;}
   const bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
     const bw=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
@@ -1095,7 +1123,9 @@ function endInnings(){
   if(state.currentInnings===0){state.currentInnings=1;state.screen='innings_setup';resetSyncCounters();}
   else{
     state.screen='result';
-    const m={...state.match,complete:true,date:new Date().toISOString()};
+    // Clear scoring lock on match completion
+    const m={...state.match,complete:true,date:new Date().toISOString(),
+      scoringLockUid:null,scoringLockEmail:'',scoringLockName:'',scoringLockAt:null};
     state.match=m;
     state.savedMatches=[m,...state.savedMatches.slice(0,19)];
     persist();
@@ -1226,7 +1256,12 @@ function handleSquadNext(){
     clubId:d.clubId||null,regionId:d.regionId||null,
     playersA:d.playersA.slice(0,d.sizeA).filter(p=>p&&p.trim()),
     playersB:d.playersB.slice(0,d.sizeB).filter(p=>p&&p.trim()),
-    innings:[]
+    innings:[],
+    // Scoring lock — set when scoring starts
+    scoringLockUid:authUser?.uid||null,
+    scoringLockEmail:authUser?.email||'',
+    scoringLockName:authUser?.displayName||authUser?.email||'',
+    scoringLockAt:new Date().toISOString(),
   };
   resetSyncCounters();
   state.currentInnings=0;state.screen='innings_setup';render();
@@ -1250,8 +1285,17 @@ function startInnings(){
     currentBatters:[op1?.id,op2?.id],charlieBowlers:[b1?.id,b2?.id],
     extras:{total:0,wides:0,noBalls:0,byes:0,legByes:0},deliveries:[],complete:false};
   const innings=[...(m.innings||[])];innings[idx]=inn;
-  state.match={...m,innings};state.screen='scoring';
-  innSetup={op1:0,op2:1,bw1:0,bw2:1};render();
+  // Take/refresh scoring lock when innings starts
+  state.match={...m,innings,
+    scoringLockUid:authUser?.uid||null,
+    scoringLockEmail:authUser?.email||'',
+    scoringLockName:authUser?.displayName||authUser?.email||'',
+    scoringLockAt:new Date().toISOString(),
+  };
+  state.screen='scoring';
+  innSetup={op1:0,op2:1,bw1:0,bw2:1};
+  persist();syncMatchToFirestore(true); // immediate sync to claim lock
+  render();
 }
 window.startInnings=startInnings;
 
@@ -1396,6 +1440,28 @@ function renderHome(){
       </div>`;
   }
 
+  // Active in-progress matches
+  let activeHtml='';
+  const active=state.activeMatches||[];
+  if(active.length>0){
+    activeHtml=`<div class="home-sec">
+      <div class="home-sec-title" style="color:var(--grass);">🔴 Active Matches (${active.length})</div>
+      ${active.map(m=>{
+        const isMine=m.scoringLockUid===authUser?.uid;
+        const isLocked=m.scoringLockUid&&!isMine;
+        const inn=m.innings?.[m.innings.length-1];
+        const score=inn?inn.total+'/'+inn.wickets+' ('+overStr(inn.legalBalls,(m.rules||DEFAULT_RULES).ballsPerOver||6)+')':'Not started';
+        return `<div class="match-card" style="border-left:3px solid ${isMine?'var(--grass)':isLocked?'#dc2626':'#d97706'};">
+          <div style="flex:1;">
+            <div class="match-vs">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
+            <div class="match-meta">${score} · ${isMine?'<span style="color:var(--grass);font-weight:700;">● You are scoring</span>':isLocked?'<span style="color:#dc2626;font-weight:700;">🔒 Locked by '+escHtml(m.scoringLockName||m.scoringLockEmail||'another user')+'</span>':'<span style="color:#d97706;font-weight:700;">No lock</span>'}</div>
+          </div>
+          <button class="match-csv" style="background:${isMine?'#f0fdf4':isLocked?'#fef2f2':'#fffbeb'};border-color:${isMine?'#bbf7d0':isLocked?'#fecaca':'#fde68a'};color:${isMine?'var(--grass)':isLocked?'#dc2626':'#b45309'};" onclick="resumeActiveMatch('${m.matchId}')">${isMine?'▶ Resume':isLocked?'👁 View':'▶ Take'}</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
   // Teams preview
   let teamsHtml='';
   if(teams.length>0){
@@ -1498,6 +1564,7 @@ function renderHome(){
         </div>
       </div>
       ${quickStart}
+      ${activeHtml}
       ${teamsHtml}
       ${histHtml}
       ${teams.length===0&&matches.length===0?`
@@ -1514,6 +1581,21 @@ function renderHome(){
     </div>
   </div>`;
 }
+
+function resumeActiveMatch(matchId){
+  const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
+  if(!m){alert('Match not found');return;}
+  state.match=m;
+  state.currentInnings=m.innings&&m.innings[1]?(m.innings[1].complete?1:1):0;
+  state.screen='scoring';
+  resetSyncCounters();
+  render();
+  // Refresh from Firestore in background to get latest state
+  if(db)db.collection('matches').doc(matchId).get().then(doc=>{
+    if(doc.exists){state.match=doc.data();render();}
+  }).catch(()=>{});
+}
+window.resumeActiveMatch=resumeActiveMatch;
 
 function startQuickMatch(){
   const a=document.getElementById('qs-teamA')?.value;
@@ -2140,16 +2222,28 @@ function renderScoring(){
       ${renderScorecard(inn,batTeam,bpo)}`;
   }
 
+  const locked=!canScore();
+  const lockBanner=locked?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;">
+    <span style="font-size:18px;">🔒</span>
+    <div style="flex:1;">
+      <div style="font-family:var(--fu);font-size:12px;font-weight:700;color:#dc2626;">Locked by ${escHtml(lockOwnerName())}</div>
+      <div style="font-size:10px;color:#991b1b;font-family:var(--fu);">View only — scoring disabled</div>
+    </div>
+    ${isAdmin()?`<button onclick="takeLock()" style="background:#dc2626;border:none;color:#fff;padding:6px 12px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">Take Lock</button>`:''}
+  </div>`:'';
+
   return `<div class="screen dark active">
     <div class="topbar dark">
       <span style="font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;color:var(--grass3);">${escHtml(batTeam)} vs ${escHtml(bowlTeam)}</span>
       <div class="topbar-actions">
+        ${!locked?`<button class="tbtn dark" onclick="openTransferModal()" title="Transfer scoring">🔄</button>`:''}
         <button class="tbtn dark" onclick="openShareModal()">📡 Share</button>
         <button class="tbtn dark" onclick="toggleScorecard()">${showScorecard?'▶ Score':'📋 Card'}</button>
         <button class="tbtn gold" onclick="exportCSV(state.match)">📥</button>
       </div>
     </div>
     <div class="screen-inner">
+      ${lockBanner}
       <!-- LAYER 1: Top scoreboard -->
       <div class="scoreboard">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -2183,6 +2277,7 @@ function renderModal(modal){
   else if(modal.type==='playernote')inner=renderPlayerNoteModal(modal.data);
   else if(modal.type==='viewnotes')inner=renderViewNotesModal(modal.data);
   else if(modal.type==='share')inner=renderShareModal();
+  else if(modal.type==='transferLock')inner=renderTransferLockModal();
   const noClose=modal.type==='newbatter'||modal.type==='nextbowler';
   return `<div class="modal-overlay" onclick="if(event.target===this&&!${noClose})closeModal()">${inner}</div>`;
 }
@@ -2460,6 +2555,104 @@ function nativeShare(url,title){
   }
 }
 window.nativeShare=nativeShare;
+
+// ─── Transfer Scoring Lock ──────────────────────────────────────────────────
+let transferUsers=[];
+let transferLoadStatus='idle'; // 'idle'|'loading'|'loaded'|'error'
+
+function openTransferModal(){
+  if(!state.match){alert('No active match');return;}
+  if(!canScore()){alert('Only the current scoring user can transfer the match');return;}
+  transferUsers=[];transferLoadStatus='loading';
+  openModal('transferLock',{});
+  // Load users from Firestore
+  if(db){
+    db.collection('users').get().then(snap=>{
+      transferUsers=[];
+      snap.forEach(doc=>{
+        const u=doc.data();
+        if(u.uid&&u.uid!==authUser.uid)transferUsers.push(u);
+      });
+      transferLoadStatus='loaded';
+      const overlay=document.querySelector('.modal-overlay');
+      if(overlay)overlay.innerHTML=renderTransferLockModal();
+    }).catch(()=>{
+      transferLoadStatus='error';
+      const overlay=document.querySelector('.modal-overlay');
+      if(overlay)overlay.innerHTML=renderTransferLockModal();
+    });
+  }
+}
+window.openTransferModal=openTransferModal;
+
+function transferScoringTo(uid,email,name){
+  if(!confirm('Transfer scoring rights to '+name+'?\n\nYou will no longer be able to score this match unless they transfer it back.'))return;
+  state.match={...state.match,
+    scoringLockUid:uid,
+    scoringLockEmail:email,
+    scoringLockName:name,
+    scoringLockAt:new Date().toISOString(),
+  };
+  persist();syncMatchToFirestore(true);
+  closeModal();
+  alert('Scoring transferred to '+name);
+  render();
+}
+window.transferScoringTo=transferScoringTo;
+
+function releaseLock(){
+  if(!confirm('Release the scoring lock? Anyone can then take over scoring this match.'))return;
+  state.match={...state.match,
+    scoringLockUid:null,scoringLockEmail:'',scoringLockName:'',scoringLockAt:null};
+  persist();syncMatchToFirestore(true);
+  closeModal();render();
+}
+window.releaseLock=releaseLock;
+
+function takeLock(){
+  if(!confirm('Take scoring control of this match? The current locker ('+lockOwnerName()+') will lose scoring rights.'))return;
+  state.match={...state.match,
+    scoringLockUid:authUser?.uid||null,
+    scoringLockEmail:authUser?.email||'',
+    scoringLockName:authUser?.displayName||authUser?.email||'',
+    scoringLockAt:new Date().toISOString(),
+  };
+  persist();syncMatchToFirestore(true);
+  closeModal();render();
+}
+window.takeLock=takeLock;
+
+function renderTransferLockModal(){
+  const m=state.match;
+  const isLocker=m?.scoringLockUid===authUser?.uid;
+  return `<div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🔄 Transfer Scoring</div>
+    <div class="modal-sub">${isLocker?'Pass scoring rights to another user. They can score; you become view-only.':'You do not currently hold the scoring lock.'}</div>
+    ${transferLoadStatus==='loading'?'<div style="text-align:center;padding:20px;color:var(--home-muted);font-family:var(--fu);font-size:12px;">Loading users...</div>':''}
+    ${transferLoadStatus==='error'?'<div style="text-align:center;padding:20px;color:#dc2626;font-family:var(--fu);font-size:12px;">Could not load users</div>':''}
+    ${transferLoadStatus==='loaded'?(transferUsers.length===0?'<div style="text-align:center;padding:20px;color:var(--home-muted);font-family:var(--fu);font-size:12px;">No other registered users found.<br>Ask them to sign up first.</div>':`
+      <div class="modal-list">
+        ${transferUsers.map(u=>{
+          const safeUid=u.uid.replace(/'/g,"\\'");
+          const safeEmail=(u.email||'').replace(/'/g,"\\'");
+          const safeName=(u.displayName||u.email||'').replace(/'/g,"\\'");
+          return `<div class="mitem" style="cursor:pointer;" onclick="transferScoringTo('${safeUid}','${safeEmail}','${safeName}')">
+            <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--grass),var(--grass2));display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;font-family:var(--fd);font-weight:700;flex-shrink:0;">${escHtml((u.displayName||u.email||'?').slice(0,2).toUpperCase())}</div>
+            <div style="flex:1;margin-left:10px;">
+              <div class="mitem-name">${escHtml(u.displayName||u.email||'')}</div>
+              <div class="mitem-meta">${escHtml(u.email||'')}${u.role==='admin'?' · 🛡️ Admin':''}</div>
+            </div>
+            <span style="color:var(--grass);font-size:18px;">→</span>
+          </div>`;
+        }).join('')}
+      </div>`):''}
+    ${isLocker?`<div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="modal-cancel" style="flex:1;margin:0;" onclick="releaseLock()">🔓 Release Lock</button>
+      <button class="modal-cancel" style="flex:1;margin:0;" onclick="closeModal()">Cancel</button>
+    </div>`:`<button class="modal-cancel" onclick="closeModal()">Close</button>`}
+  </div>`;
+}
 
 // ─── Next Bowler Modal (end of over / pair) ──────────────────────────────────
 let nextBowlerSelection={slot0:null,slot1:null};
