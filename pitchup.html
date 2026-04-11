@@ -2458,15 +2458,67 @@ function clearAllSetupPlayers(side){
 }
 window.clearAllSetupPlayers=clearAllSetupPlayers;
 
+// Find players who are already committed to another concurrent match
+// Returns a map: lowercased player name -> {matchId, teamName, matchInfo}
+function getConcurrentPlayerConflicts(){
+  const conflicts={};
+  const currentMatchId=setupData.editingMatchId||state.match?.matchId||null;
+  // Determine the "time window" for this match
+  const currentDateStr=setupData.matchDate||'';
+  let currentDay='';
+  if(currentDateStr){
+    currentDay=new Date(currentDateStr).toDateString();
+  }else{
+    // No date yet — assume today
+    currentDay=new Date().toDateString();
+  }
+  (state.activeMatches||[]).forEach(m=>{
+    if(!m||m.matchId===currentMatchId)return;
+    if(m.complete)return;
+    // Check if this match is concurrent with the one being set up
+    let isConcurrent=false;
+    if(m.scoringLockUid||(m.innings&&m.innings.length>0)){
+      // Match is currently being scored — always counts as concurrent
+      isConcurrent=true;
+    }else if(m.matchDate){
+      const mDay=new Date(m.matchDate).toDateString();
+      if(mDay===currentDay)isConcurrent=true;
+    }
+    if(!isConcurrent)return;
+    const addConflict=(name,teamName)=>{
+      if(!name)return;
+      const key=name.trim().toLowerCase();
+      if(key&&!conflicts[key]){
+        conflicts[key]={matchId:m.matchId,teamName,matchInfo:m.teamA+' vs '+m.teamB};
+      }
+    };
+    (m.playersA||[]).forEach(p=>addConflict(p,m.teamA));
+    (m.playersB||[]).forEach(p=>addConflict(p,m.teamB));
+  });
+  return conflicts;
+}
+
 function addSetupPlayerFromSquad(side,name){
+  // Check against the other side of this same match
+  const otherArr=side==='A'?setupData.playersB:setupData.playersA;
+  const otherSize=side==='A'?setupData.sizeB:setupData.sizeA;
+  if(otherArr.slice(0,otherSize).some(p=>(p||'').trim().toLowerCase()===name.trim().toLowerCase())){
+    toast(name+' is already in the other team of this match','error');
+    return;
+  }
+  // Check against concurrent matches
+  const conflicts=getConcurrentPlayerConflicts();
+  const conflict=conflicts[name.trim().toLowerCase()];
+  if(conflict){
+    toast(name+' is already in '+conflict.matchInfo,'error');
+    return;
+  }
   const arr=side==='A'?setupData.playersA:setupData.playersB;
   const sizeKey=side==='A'?'sizeA':'sizeB';
-  // Find first empty slot
   const emptyIdx=arr.findIndex((p,i)=>i<setupData[sizeKey]&&(!p||!p.trim()));
   if(emptyIdx>=0){
     arr[emptyIdx]=name;
   }else{
-    // No empty slot — extend size
     arr.push(name);
     setupData[sizeKey]=Math.min(15,setupData[sizeKey]+1);
   }
@@ -2480,6 +2532,12 @@ function renderSetupSquadPicker(side){
   const arr=side==='A'?setupData.playersA:setupData.playersB;
   const sizeKey=side==='A'?'sizeA':'sizeB';
   const existingNames=arr.slice(0,setupData[sizeKey]).map(p=>(p||'').trim().toLowerCase()).filter(Boolean);
+  // Also include the OTHER side of this match for conflict detection
+  const otherArr=side==='A'?setupData.playersB:setupData.playersA;
+  const otherSize=side==='A'?setupData.sizeB:setupData.sizeA;
+  const otherNames=otherArr.slice(0,otherSize).map(p=>(p||'').trim().toLowerCase()).filter(Boolean);
+  // Players already booked in parallel matches
+  const conflicts=getConcurrentPlayerConflicts();
 
   const allRegions=[...new Set(state.squads.map(s=>s.region).filter(Boolean))].sort();
   const allGroups=[...new Set(state.squads.filter(s=>!f.region||s.region===f.region).map(s=>s.group).filter(Boolean))].sort();
@@ -2533,14 +2591,22 @@ function renderSetupSquadPicker(side){
     </div>
     <div style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;">
       ${matches.length===0?'<div style="color:var(--home-muted);font-size:12px;text-align:center;padding:14px;font-family:var(--fu);">No players match the filters</div>':matches.map(p=>{
-        const alreadyAdded=existingNames.includes(p.name.trim().toLowerCase());
+        const nameLower=p.name.trim().toLowerCase();
+        const alreadyAdded=existingNames.includes(nameLower);
+        const inOtherTeam=otherNames.includes(nameLower);
+        const conflict=conflicts[nameLower];
+        const disabled=alreadyAdded||inOtherTeam||!!conflict;
         const safeName=p.name.replace(/'/g,"\\'");
         const skillTags=(p.skills||[]).map(sk=>{
           const def=PLAYER_SKILLS.find(s=>s.key===sk);
           return def?`<span style="font-size:8px;padding:1px 4px;border-radius:4px;background:${def.color}18;color:${def.color};font-weight:700;">${def.icon}</span>`:'';
         }).join('');
-        return `<button style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:600;cursor:pointer;border:1px solid ${alreadyAdded?'#bbf7d0':'var(--home-border)'};background:${alreadyAdded?'#f0fdf4':'#f8fafc'};color:${alreadyAdded?'var(--grass)':'var(--home-text)'};text-align:left;" onclick="${alreadyAdded?'':`addSetupPlayerFromSquad('${side}','${safeName}')`}" ${alreadyAdded?'disabled':''}>
-          <span style="flex:1;">${escHtml(p.name)}${alreadyAdded?' ✓':''}</span>
+        let bgColor='#f8fafc',borderColor='var(--home-border)',textColor='var(--home-text)',statusLabel='';
+        if(alreadyAdded){bgColor='#f0fdf4';borderColor='#bbf7d0';textColor='var(--grass)';statusLabel=' ✓';}
+        else if(inOtherTeam){bgColor='#fef2f2';borderColor='#fecaca';textColor='#dc2626';statusLabel=' · in other team';}
+        else if(conflict){bgColor='#fef2f2';borderColor='#fecaca';textColor='#dc2626';statusLabel=' · in '+conflict.matchInfo;}
+        return `<button style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;font-size:11px;font-family:var(--fu);font-weight:600;cursor:${disabled?'not-allowed':'pointer'};border:1px solid ${borderColor};background:${bgColor};color:${textColor};text-align:left;${disabled?'opacity:.6;':''}" onclick="${disabled?'':`addSetupPlayerFromSquad('${side}','${safeName}')`}" ${disabled?'disabled':''}>
+          <span style="flex:1;">${escHtml(p.name)}<span style="font-size:9px;font-weight:400;">${statusLabel}</span></span>
           <span style="display:flex;gap:2px;">${skillTags}</span>
           <span style="font-size:9px;color:var(--home-muted);">${escHtml(p.group)}</span>
         </button>`;
