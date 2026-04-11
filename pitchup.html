@@ -2458,31 +2458,48 @@ function clearAllSetupPlayers(side){
 }
 window.clearAllSetupPlayers=clearAllSetupPlayers;
 
+// Estimate match duration in hours based on format/overs
+function estimateMatchDurationHours(m){
+  const overs=m&&m.totalOvers?Number(m.totalOvers):20;
+  if(m&&m.format==='T20')return 3;
+  // Scale: 20 overs = 3 hours, linear extrapolation, min 2h
+  return Math.max(2,Math.round((overs/20)*3*10)/10);
+}
+
+// Check if two match time windows overlap
+// Returns true if they conflict (player can't play both)
+function matchWindowsOverlap(currentStart,currentEndHours,otherMatch){
+  if(!currentStart)return true; // no date on current match — treat everything same-day as conflict
+  if(!otherMatch.matchDate)return true; // other has no date — assume conflict
+  const otherStart=new Date(otherMatch.matchDate);
+  const otherDurationHours=estimateMatchDurationHours(otherMatch);
+  const otherEnd=new Date(otherStart.getTime()+otherDurationHours*60*60*1000);
+  const currentStartMs=currentStart.getTime();
+  const currentEndMs=currentStartMs+currentEndHours*60*60*1000;
+  // Overlap if: current starts before other ends AND current ends after other starts
+  return currentStartMs<otherEnd.getTime()&&currentEndMs>otherStart.getTime();
+}
+
 // Find players who are already committed to another concurrent match
 // Returns a map: lowercased player name -> {matchId, teamName, matchInfo}
 function getConcurrentPlayerConflicts(){
   const conflicts={};
   const currentMatchId=setupData.editingMatchId||state.match?.matchId||null;
-  // Determine the "time window" for this match
   const currentDateStr=setupData.matchDate||'';
-  let currentDay='';
-  if(currentDateStr){
-    currentDay=new Date(currentDateStr).toDateString();
-  }else{
-    // No date yet — assume today
-    currentDay=new Date().toDateString();
-  }
+  const currentStart=currentDateStr?new Date(currentDateStr):null;
+  const currentOvers=setupData.format==='T20'?20:(setupData.overs||20);
+  const currentDurationHours=setupData.format==='T20'?3:Math.max(2,(currentOvers/20)*3);
+
   (state.activeMatches||[]).forEach(m=>{
     if(!m||m.matchId===currentMatchId)return;
     if(m.complete)return;
-    // Check if this match is concurrent with the one being set up
+    // Live match being scored — always a conflict (happening right now)
     let isConcurrent=false;
     if(m.scoringLockUid||(m.innings&&m.innings.length>0)){
-      // Match is currently being scored — always counts as concurrent
       isConcurrent=true;
-    }else if(m.matchDate){
-      const mDay=new Date(m.matchDate).toDateString();
-      if(mDay===currentDay)isConcurrent=true;
+    }else{
+      // Check time window overlap with this match's start + estimated duration
+      isConcurrent=matchWindowsOverlap(currentStart,currentDurationHours,m);
     }
     if(!isConcurrent)return;
     const addConflict=(name,teamName)=>{
