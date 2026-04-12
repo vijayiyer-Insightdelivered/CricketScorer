@@ -1646,6 +1646,7 @@ function render(){
   else if(s==='scoring')html=renderScoring();
   else if(s==='result')html=renderResult();
   else if(s==='sync_settings')html=renderSyncSettings();
+  else if(s==='admin_users')html=renderAdminUsers();
   else if(s==='player_perf')html=renderPlayerPerformance();
   else if(s==='player_detail')html=renderPlayerDetail();
   else if(s==='edit_match')html=renderEditMatch();
@@ -1767,6 +1768,7 @@ function renderHome(){
           </div>
         </div>`:''}
         <button onclick="state.screen='teams';render()" style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:9px;color:var(--grass2);padding:7px 12px;cursor:pointer;font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.5px;">👥</button>
+        ${isAdmin()?`<button onclick="state.screen='admin_users';render()" style="background:#fffbeb;border:1.5px solid #fde68a;border-radius:9px;color:#b45309;padding:7px 10px;cursor:pointer;font-size:14px;" title="Admin Panel">👥</button>`:``}
         <button onclick="state.screen='sync_settings';render()" style="background:#f1f5f9;border:1.5px solid var(--home-border);border-radius:9px;color:#475569;padding:7px 10px;cursor:pointer;font-size:14px;">⚙️</button>
         <button onclick="doLogout()" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:9px;color:#dc2626;padding:7px 10px;cursor:pointer;font-size:12px;" title="Sign out">🚪</button>
       </div>
@@ -4146,6 +4148,160 @@ function renderEditSquad(){
       <div class="light-nav-row">
         <button class="light-btn-secondary" onclick="editSquadData=null;state.screen='squads';render()">Cancel</button>
         <button class="light-btn-primary" onclick="saveSquad()">✓ Save Squad</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─── ADMIN: USER MANAGEMENT ──────────────────────────────────────────────────
+let adminUsersData=[];
+let adminUsersLoading=false;
+
+function loadAdminUsers(){
+  if(!db||!isAdmin())return;
+  adminUsersLoading=true;render();
+  db.collection('users').get({source:'server'}).then(snap=>{
+    adminUsersData=[];
+    snap.forEach(doc=>adminUsersData.push(doc.data()));
+    adminUsersLoading=false;
+    // Enrich with match/squad activity
+    adminUsersData.forEach(u=>{
+      u._matchesScored=0;u._matchesScheduled=0;u._squadsEdited=0;u._notesAdded=0;u._lastActive='';
+      state.savedMatches.forEach(m=>{
+        if(m.scoringLockUid===u.uid||m.scheduledBy===u.uid)u._matchesScored++;
+        (m.playerNotes||[]).forEach(n=>{if(n.author===u.displayName||n.author===u.email)u._notesAdded++;});
+      });
+      (state.activeMatches||[]).forEach(m=>{
+        if(m.scoringLockUid===u.uid)u._matchesScored++;
+        if(m.scheduledBy===u.uid)u._matchesScheduled++;
+      });
+    });
+    adminUsersData.sort((a,b)=>(b._matchesScored+b._matchesScheduled)-(a._matchesScored+a._matchesScheduled));
+    render();
+  }).catch(e=>{
+    adminUsersLoading=false;
+    toast('Failed to load users: '+e.message,'error');
+    render();
+  });
+}
+window.loadAdminUsers=loadAdminUsers;
+
+function adminChangeRole(uid,newRole){
+  if(!isAdmin()||!db)return;
+  const u=adminUsersData.find(x=>x.uid===uid);
+  const name=u?u.displayName||u.email:'this user';
+  const label=newRole==='admin'?'Admin':'Standard User';
+  confirmModal('Change '+name+' to '+label+'?','Change Role',{okLabel:'Change'}).then(ok=>{
+    if(!ok)return;
+    db.collection('users').doc(uid).update({role:newRole}).then(()=>{
+      if(u)u.role=newRole;
+      if(uid===authUser?.uid){authUser.role=newRole;saveAuthCache();}
+      toast(name+' is now '+label,'success');
+      render();
+    }).catch(e=>toast('Failed: '+e.message,'error'));
+  });
+}
+window.adminChangeRole=adminChangeRole;
+
+function adminDeleteUser(uid){
+  if(!isAdmin()||!db)return;
+  const u=adminUsersData.find(x=>x.uid===uid);
+  if(u&&u.uid===authUser?.uid){toast('Cannot delete your own account','error');return;}
+  const name=u?u.displayName||u.email:'this user';
+  confirmModal('Remove '+name+' from the system? Their Firebase Auth account will still exist but PitchUp profile will be deleted.','Delete User',{danger:true,okLabel:'Delete'}).then(ok=>{
+    if(!ok)return;
+    db.collection('users').doc(uid).delete().then(()=>{
+      adminUsersData=adminUsersData.filter(x=>x.uid!==uid);
+      toast(name+' removed','success');
+      render();
+    }).catch(e=>toast('Failed: '+e.message,'error'));
+  });
+}
+window.adminDeleteUser=adminDeleteUser;
+
+function renderAdminUsers(){
+  if(!isAdmin()){state.screen='home';return renderHome();}
+  // Auto-load on first visit
+  if(adminUsersData.length===0&&!adminUsersLoading)loadAdminUsers();
+
+  const totalMatches=state.savedMatches.length+(state.activeMatches||[]).filter(m=>!m.scheduled).length;
+  const totalScheduled=(state.activeMatches||[]).filter(m=>m.scheduled).length;
+  const totalSquads=state.squads.length;
+  const totalPlayers=state.squads.reduce((s,sq)=>s+sq.players.length,0);
+
+  // Users currently scoring (have lock on active match)
+  const activeScorers=(state.activeMatches||[]).filter(m=>m.scoringLockUid&&!m.complete&&!m.scheduled).map(m=>({uid:m.scoringLockUid,name:m.scoringLockName||m.scoringLockEmail,match:m.teamA+' vs '+m.teamB}));
+
+  return `<div class="screen light active">
+    <div class="topbar light">
+      <button class="topbar-back" onclick="state.screen='home';render()" style="color:#64748b;">←</button>
+      <span class="topbar-title" style="color:#0f172a;">🛡️ Admin Panel</span>
+      <button onclick="loadAdminUsers()" style="background:#f0fdf4;border:1px solid #bbf7d0;color:var(--grass);padding:5px 12px;border-radius:7px;font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+    </div>
+    <div class="screen-inner light">
+
+      <!-- Platform summary -->
+      <div class="team-form-card" style="margin-bottom:14px;">
+        <div class="team-form-title">📊 Platform Summary</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;">
+          <div><div style="font-family:var(--fd);font-size:22px;font-weight:700;color:var(--home-text);">${adminUsersData.length}</div><div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">USERS</div></div>
+          <div><div style="font-family:var(--fd);font-size:22px;color:var(--home-text);">${totalMatches}</div><div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">MATCHES</div></div>
+          <div><div style="font-family:var(--fd);font-size:22px;color:var(--home-text);">${totalSquads}</div><div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">SQUADS</div></div>
+          <div><div style="font-family:var(--fd);font-size:22px;color:var(--home-text);">${totalPlayers}</div><div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">PLAYERS</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;text-align:center;margin-top:10px;">
+          <div><div style="font-family:var(--fd);font-size:18px;color:#d97706;">${totalScheduled}</div><div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">SCHEDULED</div></div>
+          <div><div style="font-family:var(--fd);font-size:18px;color:var(--grass);">${activeScorers.length}</div><div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">SCORING NOW</div></div>
+        </div>
+      </div>
+
+      ${activeScorers.length>0?`
+      <!-- Who's scoring right now -->
+      <div class="team-form-card" style="margin-bottom:14px;">
+        <div class="team-form-title" style="color:var(--grass);">🟢 Currently Scoring</div>
+        ${activeScorers.map(s=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--home-border);">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--grass);flex-shrink:0;"></div>
+            <div style="flex:1;">
+              <div style="font-family:var(--fu);font-size:12px;font-weight:700;color:var(--home-text);">${escHtml(s.name)}</div>
+              <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${escHtml(s.match)}</div>
+            </div>
+          </div>`).join('')}
+      </div>`:''}
+
+      <!-- User list -->
+      <div class="team-form-card" style="margin-bottom:14px;">
+        <div class="team-form-title">👥 Registered Users (${adminUsersData.length})</div>
+        ${adminUsersLoading?'<div style="text-align:center;padding:20px;color:var(--home-muted);font-family:var(--fu);">Loading users...</div>':''}
+        ${!adminUsersLoading&&adminUsersData.length===0?'<div style="text-align:center;padding:20px;color:var(--home-muted);font-family:var(--fu);">No users found</div>':''}
+        ${adminUsersData.map(u=>{
+          const isMe=u.uid===authUser?.uid;
+          const isUserAdmin=u.role==='admin';
+          const isHardAdmin=ADMIN_EMAILS.includes((u.email||'').toLowerCase());
+          const isOnline=activeScorers.some(s=>s.uid===u.uid);
+          return `<div style="background:#fff;border:1px solid var(--home-border);border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+            <div style="display:flex;align-items:flex-start;gap:10px;">
+              <div style="width:38px;height:38px;border-radius:50%;background:${isUserAdmin?'linear-gradient(135deg,#d97706,#b45309)':'linear-gradient(135deg,var(--grass),var(--grass2))'};display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;font-family:var(--fd);font-weight:700;flex-shrink:0;position:relative;">
+                ${escHtml((u.displayName||u.email||'?').slice(0,2).toUpperCase())}
+                ${isOnline?'<div style="position:absolute;bottom:-1px;right:-1px;width:12px;height:12px;border-radius:50%;background:var(--grass);border:2px solid #fff;"></div>':''}
+              </div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-family:var(--fu);font-size:13px;font-weight:700;color:var(--home-text);">${escHtml(u.displayName||'No name')}${isMe?' <span style="color:var(--grass);font-size:10px;">(you)</span>':''}</div>
+                <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);overflow:hidden;text-overflow:ellipsis;">${escHtml(u.email||'')}</div>
+                <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
+                  <span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);font-weight:700;letter-spacing:.5px;${isUserAdmin?'background:#fffbeb;color:#b45309;border:1px solid #fde68a;':'background:#f0fdf4;color:var(--grass);border:1px solid #bbf7d0;'}">${isUserAdmin?'🛡️ ADMIN':'👤 STANDARD'}</span>
+                  ${u._matchesScored>0?`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;">${u._matchesScored} matches</span>`:''}
+                  ${u._matchesScheduled>0?`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);background:#fffbeb;color:#b45309;border:1px solid #fde68a;">${u._matchesScheduled} scheduled</span>`:''}
+                  ${u._notesAdded>0?`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe;">📝 ${u._notesAdded} notes</span>`:''}
+                </div>
+              </div>
+            </div>
+            ${!isHardAdmin?`<div style="display:flex;gap:6px;margin-top:8px;">
+              ${isUserAdmin?`<button onclick="adminChangeRole('${u.uid}','standard')" style="flex:1;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;color:var(--grass);padding:6px;font-family:var(--fu);font-size:10px;font-weight:700;cursor:pointer;">Set Standard</button>`:`<button onclick="adminChangeRole('${u.uid}','admin')" style="flex:1;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;color:#b45309;padding:6px;font-family:var(--fu);font-size:10px;font-weight:700;cursor:pointer;">Make Admin</button>`}
+              ${!isMe?`<button onclick="adminDeleteUser('${u.uid}')" style="background:#fef2f2;border:1px solid #fecaca;border-radius:7px;color:#dc2626;padding:6px 10px;font-family:var(--fu);font-size:10px;font-weight:700;cursor:pointer;">Remove</button>`:''}
+            </div>`:`<div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);margin-top:6px;">Primary admin — role cannot be changed</div>`}
+          </div>`;
+        }).join('')}
       </div>
     </div>
   </div>`;
