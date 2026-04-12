@@ -1768,7 +1768,6 @@ function renderHome(){
           </div>
         </div>`:''}
         <button onclick="state.screen='teams';render()" style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:9px;color:var(--grass2);padding:7px 12px;cursor:pointer;font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.5px;">👥</button>
-        ${isAdmin()?`<button onclick="state.screen='admin_users';render()" style="background:#fffbeb;border:1.5px solid #fde68a;border-radius:9px;color:#b45309;padding:7px 10px;cursor:pointer;font-size:14px;" title="Admin Panel">👥</button>`:``}
         <button onclick="state.screen='sync_settings';render()" style="background:#f1f5f9;border:1.5px solid var(--home-border);border-radius:9px;color:#475569;padding:7px 10px;cursor:pointer;font-size:14px;">⚙️</button>
         <button onclick="doLogout()" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:9px;color:#dc2626;padding:7px 10px;cursor:pointer;font-size:12px;" title="Sign out">🚪</button>
       </div>
@@ -3678,6 +3677,14 @@ function renderSyncSettings(){
         <div style="font-size:11px;color:var(--home-muted);text-align:center;margin-top:6px;font-family:var(--fu);">Push all local data to cloud immediately</div>
       </div>
       `:''}
+      `:''}
+
+      ${isAdmin()?`
+      <!-- Admin Panel link -->
+      <div class="team-form-card" style="margin-bottom:14px;">
+        <div class="team-form-title" style="color:#b45309;">🛡️ Admin</div>
+        <button onclick="state.screen='admin_users';render()" style="width:100%;background:#fffbeb;border:1.5px solid #fde68a;border-radius:9px;color:#b45309;padding:11px;cursor:pointer;font-family:var(--fu);font-size:13px;font-weight:700;">👥 User Management & Usage Report</button>
+      </div>
       `:''}
 
       <div class="light-nav-row">
