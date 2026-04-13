@@ -866,6 +866,10 @@ function syncSquadsToFirestore(){
       region:sq.region||'',
       group:sq.group||'',
       players:sq.players.map(p=>({id:p.id,name:p.name,skills:p.skills||[]})),
+      visibility:sq.visibility||'public',
+      sharedWith:sq.sharedWith||[],
+      createdBy:sq.createdBy||null,
+      createdByName:sq.createdByName||'',
       updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy:fbUid
     },{merge:true}).then(()=>{
@@ -2176,9 +2180,9 @@ function renderEditTeam(){
         const existingNames=editTeamData.players.map(p=>p.name.trim().toLowerCase()).filter(Boolean);
         const searchLower=f.search.trim().toLowerCase();
 
-        // Build flat filtered list
+        // Build flat filtered list (respecting visibility)
         const matches=[];
-        state.squads.forEach(sq=>{
+        getVisibleSquads().forEach(sq=>{
           if(f.region&&sq.region!==f.region)return;
           if(f.group&&sq.group!==f.group)return;
           sq.players.forEach(p=>{
@@ -2583,7 +2587,7 @@ function renderSetupSquadPicker(side){
   const searchLower=f.search.trim().toLowerCase();
 
   const matches=[];
-  state.squads.forEach(sq=>{
+  getVisibleSquads().forEach(sq=>{
     if(f.region&&sq.region!==f.region)return;
     if(f.group&&sq.group!==f.group)return;
     sq.players.forEach(p=>{
@@ -3726,6 +3730,45 @@ const PLAYER_SKILLS=[
 ];
 let editSquadData=null; // {id,region,group,players:[{id,name,skills:[]}]}
 
+// ─── Squad Visibility Helpers ─────────────────────────────────────────────────
+function canViewSquad(sq){
+  if(!sq)return false;
+  const vis=sq.visibility||'public';
+  if(vis==='public')return true;
+  if(isAdmin())return true; // admins see everything
+  const uid=authUser?.uid;
+  if(!uid)return false;
+  if(sq.createdBy===uid)return true; // creator always sees their own
+  if(vis==='shared'&&(sq.sharedWith||[]).includes(uid))return true;
+  return false;
+}
+
+function canEditSquad(sq){
+  if(!sq)return false;
+  if(isAdmin())return true;
+  return sq.createdBy===authUser?.uid;
+}
+
+function getVisibleSquads(){
+  return state.squads.filter(canViewSquad);
+}
+
+function setSquadVisibility(val){
+  if(editSquadData)editSquadData.visibility=val;
+  render();
+}
+window.setSquadVisibility=setSquadVisibility;
+
+function toggleShareWith(uid){
+  if(!editSquadData)return;
+  const arr=editSquadData.sharedWith||[];
+  const idx=arr.indexOf(uid);
+  if(idx>=0)arr.splice(idx,1);else arr.push(uid);
+  editSquadData.sharedWith=arr;
+  render();
+}
+window.toggleShareWith=toggleShareWith;
+
 // ─── Excel/CSV Upload for Master Squads ──────────────────────────────────────
 function downloadSquadTemplate(){
   if(typeof XLSX==='undefined'){toast('Excel library not loaded, try again','error');return;}
@@ -3917,14 +3960,17 @@ function renderUploadPreviewModal(){
 }
 
 function newSquad(){
-  editSquadData={id:uid(),region:'',group:'',players:[{id:uid(),name:'',skills:[]},{id:uid(),name:'',skills:[]},{id:uid(),name:'',skills:[]}]};
+  editSquadData={id:uid(),region:'',group:'',players:[{id:uid(),name:'',skills:[]},{id:uid(),name:'',skills:[]},{id:uid(),name:'',skills:[]}],
+    visibility:'public',sharedWith:[],createdBy:authUser?.uid||null,createdByName:authUser?.displayName||authUser?.email||''};
   state.screen='edit_squad';render();
 }
 window.newSquad=newSquad;
 
 function editSquad(id){
   const sq=state.squads.find(s=>s.id===id);if(!sq)return;
-  editSquadData={...sq,players:sq.players.map(p=>({...p,skills:p.skills||[]}))};
+  editSquadData={...sq,players:sq.players.map(p=>({...p,skills:p.skills||[]})),
+    visibility:sq.visibility||'public',sharedWith:sq.sharedWith||[],
+    createdBy:sq.createdBy||authUser?.uid||null,createdByName:sq.createdByName||''};
   state.screen='edit_squad';render();
 }
 window.editSquad=editSquad;
@@ -4023,7 +4069,11 @@ function saveSquad(){
 
   const players=editSquadData.players.filter(p=>p.name.trim()).map(p=>({id:p.id,name:p.name.trim(),skills:p.skills||[]}));
   if(players.length<1){toast('Add at least one player','error');return;}
-  const sq={id:editSquadData.id,region,group,players};
+  const sq={id:editSquadData.id,region,group,players,
+    visibility:editSquadData.visibility||'public',
+    sharedWith:editSquadData.sharedWith||[],
+    createdBy:editSquadData.createdBy||authUser?.uid||null,
+    createdByName:editSquadData.createdByName||authUser?.displayName||authUser?.email||''};
   const idx=state.squads.findIndex(s=>s.id===sq.id);
   if(idx>=0)state.squads[idx]=sq;else state.squads.push(sq);
   persist();syncSquadsToFirestore();
@@ -4050,7 +4100,7 @@ window.toggleSquadSkill=toggleSquadSkill;
 window.removeSquadPlayer=removeSquadPlayer;
 
 function renderSquads(){
-  const squads=state.squads;
+  const squads=getVisibleSquads();
   // Group by region
   const regions={};
   squads.forEach(sq=>{
@@ -4084,11 +4134,16 @@ function renderSquads(){
                 const sk={};sq.players.forEach(p=>(p.skills||[]).forEach(s=>{sk[s]=(sk[s]||0)+1;}));
                 const tags=PLAYER_SKILLS.filter(s=>sk[s.key]).map(s=>`<span style="color:${s.color};font-size:9px;">${s.icon}${sk[s.key]}</span>`);
                 return tags.length?' · '+tags.join(' '):'';
+              })()} · ${(()=>{
+                const v=sq.visibility||'public';
+                if(v==='private')return '<span style="color:#dc2626;">🔒 Private</span>';
+                if(v==='shared')return '<span style="color:#2563eb;">👥 Shared</span>';
+                return '<span style="color:var(--grass);">🌐 Public</span>';
               })()}</div>
             </div>
             <div class="team-actions">
-              <button class="team-action-btn" onclick="editSquad('${safeId}')">Edit</button>
-              <button class="team-action-btn danger" onclick="deleteSquad('${safeId}')">✕</button>
+              ${canEditSquad(sq)?`<button class="team-action-btn" onclick="editSquad('${safeId}')">Edit</button>
+              <button class="team-action-btn danger" onclick="deleteSquad('${safeId}')">✕</button>`:`<span style="font-size:9px;color:var(--home-muted);font-family:var(--fu);">View only</span>`}
             </div>
           </div>`;
         }).join('')}
@@ -4165,6 +4220,51 @@ function renderEditSquad(){
         ${regionOpts}
         <label class="light-label">Training Group</label>
         <input class="light-input" value="${escHtml(d.group)}" placeholder="e.g. U11 Development, U12 Pathway" oninput="updateSquadField('group',this.value)"/>
+      </div>
+      <!-- Visibility -->
+      <div class="team-form-card">
+        <div class="team-form-title">🔐 Visibility</div>
+        <div style="font-size:11px;color:var(--home-muted);margin-bottom:10px;font-family:var(--fu);">Who can see this squad?</div>
+        ${[
+          {val:'public',icon:'🌐',label:'Public',desc:'All coaches can see and use this squad',color:'var(--grass)'},
+          {val:'shared',icon:'👥',label:'Shared',desc:'Only selected coaches can see this squad',color:'#2563eb'},
+          {val:'private',icon:'🔒',label:'Private',desc:'Only you can see this squad',color:'#dc2626'},
+        ].map(v=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;margin-bottom:6px;cursor:pointer;border:1.5px solid ${d.visibility===v.val?v.color:'var(--home-border)'};background:${d.visibility===v.val?v.color+'0a':'#fff'};" onclick="setSquadVisibility('${v.val}')">
+            <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${d.visibility===v.val?v.color:'#cbd5e1'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              ${d.visibility===v.val?`<div style="width:10px;height:10px;border-radius:50%;background:${v.color};"></div>`:''}
+            </div>
+            <div style="flex:1;">
+              <div style="font-family:var(--fu);font-weight:600;font-size:13px;color:var(--home-text);">${v.icon} ${v.label}</div>
+              <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);">${v.desc}</div>
+            </div>
+          </div>`).join('')}
+        ${d.visibility==='shared'?`
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--home-border);">
+            <div style="font-family:var(--fu);font-size:11px;font-weight:700;color:#2563eb;letter-spacing:1px;margin-bottom:8px;">SHARE WITH</div>
+            <div id="share-coach-list" style="max-height:200px;overflow-y:auto;">
+              ${(()=>{
+                // Load coaches from cached admin data or show loading
+                if(adminUsersData.length>0){
+                  return adminUsersData.filter(u=>u.uid!==authUser?.uid).map(u=>{
+                    const shared=(d.sharedWith||[]).includes(u.uid);
+                    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--home-border);cursor:pointer;" onclick="toggleShareWith('${u.uid}')">
+                      <div style="width:18px;height:18px;border-radius:4px;border:1.5px solid ${shared?'#2563eb':'#cbd5e1'};background:${shared?'#2563eb':'#fff'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        ${shared?'<span style="color:#fff;font-size:11px;">✓</span>':''}
+                      </div>
+                      <div style="flex:1;">
+                        <div style="font-family:var(--fu);font-size:12px;font-weight:600;color:var(--home-text);">${escHtml(u.displayName||u.email)}</div>
+                        <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${escHtml(u.email||'')}${u.role==='admin'?' · Admin':''}</div>
+                      </div>
+                    </div>`;
+                  }).join('')||'<div style="font-size:11px;color:var(--home-muted);padding:10px;text-align:center;">No other coaches registered</div>';
+                }else{
+                  return '<div style="font-size:11px;color:var(--home-muted);padding:10px;text-align:center;">Loading coaches...<br><button onclick="loadAdminUsers()" style="margin-top:6px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#2563eb;padding:4px 10px;font-family:var(--fu);font-size:10px;font-weight:700;cursor:pointer;">Load</button></div>';
+                }
+              })()}
+            </div>
+            <div style="font-size:10px;color:var(--home-muted);margin-top:6px;font-family:var(--fu);">${(d.sharedWith||[]).length} coach${(d.sharedWith||[]).length!==1?'es':''} selected</div>
+          </div>`:''}
       </div>
       <div class="team-form-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--home-border);">
