@@ -577,12 +577,35 @@ window.doRegister=doRegister;
 function doResetPassword(){
   authForm.error='';authForm.success='';
   if(!authForm.email){authForm.error='Enter your email address';render();return;}
-  fbAuth.sendPasswordResetEmail(authForm.email).then(()=>{
-    authForm.success='Password reset link sent to '+authForm.email;authForm.error='';render();
-  }).catch(e=>{
-    authForm.error=e.code==='auth/user-not-found'?'No account with this email':e.message;
-    render();
-  });
+  // First check if user exists in our Firestore users collection
+  if(db){
+    db.collection('users').where('email','==',authForm.email.trim()).get().then(snap=>{
+      if(snap.empty){
+        authForm.error='No account registered with this email';authForm.success='';render();
+        return;
+      }
+      fbAuth.sendPasswordResetEmail(authForm.email.trim()).then(()=>{
+        authForm.success='Password reset link sent to '+authForm.email;authForm.error='';render();
+      }).catch(e=>{
+        authForm.error=e.code==='auth/user-not-found'?'No account with this email':
+          e.code==='auth/invalid-email'?'Invalid email format':e.message;
+        render();
+      });
+    }).catch(()=>{
+      // Firestore check failed — try anyway
+      fbAuth.sendPasswordResetEmail(authForm.email.trim()).then(()=>{
+        authForm.success='Password reset link sent to '+authForm.email;authForm.error='';render();
+      }).catch(e=>{
+        authForm.error=e.message;render();
+      });
+    });
+  }else{
+    fbAuth.sendPasswordResetEmail(authForm.email.trim()).then(()=>{
+      authForm.success='Password reset link sent to '+authForm.email;authForm.error='';render();
+    }).catch(e=>{
+      authForm.error=e.message;render();
+    });
+  }
 }
 window.doResetPassword=doResetPassword;
 
