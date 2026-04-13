@@ -498,20 +498,36 @@ function loadUserRole(user){
 function handleAuthReady(user){
   fbUid=user.uid;fbReady=true;
   syncStatus=navigator.onLine?'synced':'offline';
-  // Determine role immediately — check hardcoded admin list first
+  _authBusy=false;
   const isHardAdmin=user.email&&ADMIN_EMAILS.includes(user.email.toLowerCase());
   const immediateRole=isHardAdmin?'admin':(authUser?.uid===user.uid?authUser.role:'standard');
   authUser={uid:user.uid,email:user.email,role:immediateRole,displayName:user.displayName||authForm.name||''};
   saveAuthCache();
   if(state.screen==='login')state.screen='home';
   render();
-  // Also refresh from Firestore in background (for non-hardcoded users)
-  if(!isHardAdmin){
-    loadUserRole(user).then(role=>{
-      if(role!==authUser.role){authUser.role=role;saveAuthCache();render();}
-    }).catch(()=>{});
+  // Ensure user doc exists in Firestore (auto-recover if missing)
+  if(db){
+    db.collection('users').doc(user.uid).get().then(doc=>{
+      if(!doc.exists){
+        // User doc missing — create it (recovery for incomplete registrations)
+        console.log('Creating missing user doc for',user.email);
+        saveUserToFirestore(user,immediateRole);
+      }else{
+        // Doc exists — refresh role from it (unless hardcoded admin)
+        const data=doc.data();
+        if(!isHardAdmin&&data.role&&data.role!==authUser.role){
+          authUser.role=data.role;saveAuthCache();render();
+        }
+        // Update displayName if it changed
+        if(user.displayName&&data.displayName!==user.displayName){
+          db.collection('users').doc(user.uid).update({displayName:user.displayName}).catch(()=>{});
+        }
+      }
+    }).catch(()=>{
+      // Firestore read failed — try to create doc anyway
+      saveUserToFirestore(user,immediateRole);
+    });
   }
-  try{saveUserToFirestore(user,authUser.role);}catch(e){}
   migrateLocalToFirestore();
   loadFromFirestore();
 }
