@@ -41,6 +41,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<!-- Sentry error tracking — config via SENTRY_DSN constant below; leave empty to disable -->
+<script src="https://browser.sentry-cdn.com/7.119.2/bundle.tracing.min.js" crossorigin="anonymous"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600&display=swap');
 :root{
@@ -414,6 +416,68 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;}
 <script>
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
+// App + data schema version — bumped each deploy, used to detect updates
+const APP_VERSION='2.1.0';
+const SCHEMA_VERSION=1;
+
+// ─── Schema version detection ────────────────────────────────────────────────
+let _remoteSchemaMax=0;
+function noteRemoteSchema(v){
+  if(typeof v!=='number'||v<=_remoteSchemaMax)return;
+  _remoteSchemaMax=v;
+  if(_remoteSchemaMax>SCHEMA_VERSION){
+    showUpdateBanner();
+  }
+}
+function showUpdateBanner(){
+  if(document.getElementById('update-banner'))return;
+  const el=document.createElement('div');
+  el.id='update-banner';
+  el.style.cssText='position:fixed;top:0;left:0;right:0;background:#d97706;color:#fff;padding:10px 14px;z-index:999;font-family:var(--fu);font-size:13px;font-weight:700;display:flex;gap:10px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+  el.innerHTML='<span style="flex:1;">⬆️ A newer version of PitchUp is available. Some data may not display correctly.</span>'+
+    '<button onclick="location.reload(true);" style="background:#fff;color:#d97706;border:none;padding:6px 12px;border-radius:6px;font-family:var(--fu);font-weight:700;font-size:12px;cursor:pointer;">Update Now</button>';
+  document.body.appendChild(el);
+}
+
+// ─── Sentry Error Tracking ────────────────────────────────────────────────────
+// To enable: paste your Sentry DSN here (Sentry → Project Settings → Client Keys)
+// When empty, Sentry is disabled and app runs normally.
+const SENTRY_DSN='';
+try{
+  if(SENTRY_DSN&&typeof Sentry!=='undefined'){
+    Sentry.init({
+      dsn:SENTRY_DSN,
+      release:'pitchup@'+APP_VERSION,
+      environment:window.location.hostname.includes('railway')||window.location.hostname.includes('github.io')?'production':'local',
+      tracesSampleRate:0.1,
+      ignoreErrors:[
+        'ResizeObserver loop limit exceeded',
+        'Non-Error promise rejection captured',
+        /firestore.*offline/i,
+      ],
+    });
+    console.log('Sentry enabled');
+  }
+}catch(e){console.warn('Sentry init failed:',e);}
+
+function sentryIdentifyUser(){
+  try{
+    if(typeof Sentry==='undefined'||!SENTRY_DSN)return;
+    if(authUser){
+      Sentry.setUser({id:authUser.uid,email:authUser.email,username:authUser.displayName});
+    }else{
+      Sentry.setUser(null);
+    }
+  }catch(e){}
+}
+function sentryCapture(err,context){
+  try{
+    if(typeof Sentry==='undefined'||!SENTRY_DSN)return;
+    if(context)Sentry.setContext('action',context);
+    Sentry.captureException(err);
+  }catch(e){}
+}
+
 const DEFAULT_RULES={ballsPerOver:6,wideRuns:1,wideBowlAgain:true,noBallRuns:1,noBallBowlAgain:true,retirementScore:0,maxOversPerBowler:0,playToFullOvers:false};
 const STORAGE_KEY='pitchup_v1';
 const WICKET_TYPES=['Bowled','Caught','LBW','Run Out','Stumped','Hit Wicket','Retired'];
@@ -503,6 +567,7 @@ function handleAuthReady(user){
   const immediateRole=isHardAdmin?'admin':(authUser?.uid===user.uid?authUser.role:'standard');
   authUser={uid:user.uid,email:user.email,role:immediateRole,displayName:user.displayName||authForm.name||''};
   saveAuthCache();
+  sentryIdentifyUser();
   if(state.screen==='login')state.screen='home';
   render();
   // Ensure user doc exists in Firestore (auto-recover if missing)
@@ -613,6 +678,7 @@ function doLogout(){
   clearAuthCache();fbReady=false;fbUid=null;
   authForm={email:'',password:'',name:'',error:'',success:''};
   authScreen='login';state.screen='login';render();
+  try{if(typeof Sentry!=='undefined')Sentry.setUser(null);}catch(e){}
   try{if(fbAuth)fbAuth.signOut().catch(()=>{});}catch(e){}
 }
 window.doLogout=doLogout;
@@ -821,7 +887,7 @@ function syncMatchToFirestore(force){
     matchDate:m.matchDate||'',
     venue:m.venue||'',
     complete:!!m.complete,date:m.date||null,
-    updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+    schemaVersion:SCHEMA_VERSION,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid,deviceId:getDeviceId()
   };
   db.collection('matches').doc(matchId).set(doc,{merge:true}).then(()=>{
@@ -838,7 +904,7 @@ function syncTeamsToFirestore(){
     db.collection('teams').doc(team.id).set({
       ...team,
       players:team.players.map(p=>({id:p.id,name:p.name})),
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      schemaVersion:SCHEMA_VERSION,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy:fbUid
     },{merge:true}).catch(e=>console.warn('Team sync failed:',e));
   });
@@ -875,7 +941,7 @@ function syncMatchDocToFirestore(m){
     matchDate:m.matchDate||'',
     venue:m.venue||'',
     complete:!!m.complete,date:m.date||null,
-    updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+    schemaVersion:SCHEMA_VERSION,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy:fbUid
   };
   db.collection('matches').doc(m.matchId).set(doc,{merge:true}).catch(e=>console.warn('Match sync failed:',e));
@@ -893,7 +959,7 @@ function syncSquadsToFirestore(){
       sharedWith:sq.sharedWith||[],
       createdBy:sq.createdBy||null,
       createdByName:sq.createdByName||'',
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      schemaVersion:SCHEMA_VERSION,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy:fbUid
     },{merge:true}).then(()=>{
       console.log('Squad synced:',sq.id,sq.region,sq.group);
@@ -920,7 +986,7 @@ function loadFromFirestore(){
   // Load teams from Firestore (merge with local)
   db.collection('teams').get().then(snap=>{
     const fbTeams=[];
-    snap.forEach(doc=>fbTeams.push(doc.data()));
+    snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbTeams.push(d);});
     // Merge: Firestore wins for existing IDs, keep local-only teams
     const merged=[...state.teams];
     fbTeams.forEach(ft=>{
@@ -934,7 +1000,7 @@ function loadFromFirestore(){
   // Load saved matches from Firestore (merge with local)
   db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(20).get().then(snap=>{
     const fbMatches=[];
-    snap.forEach(doc=>fbMatches.push(doc.data()));
+    snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbMatches.push(d);});
     const merged=[...state.savedMatches];
     fbMatches.forEach(fm=>{
       if(!fm.matchId)return;
@@ -948,7 +1014,7 @@ function loadFromFirestore(){
   // Load in-progress (active) matches from Firestore
   db.collection('matches').where('complete','==',false).limit(20).get().then(snap=>{
     const fbActive=[];
-    snap.forEach(doc=>fbActive.push(doc.data()));
+    snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbActive.push(d);});
     state.activeMatches=fbActive;
     render();
   }).catch(()=>{});
@@ -956,7 +1022,7 @@ function loadFromFirestore(){
   if(_squadsUnsub){_squadsUnsub();}
   _squadsUnsub=db.collection('squads').onSnapshot(snap=>{
     const fbSquads=[];
-    snap.forEach(doc=>fbSquads.push(doc.data()));
+    snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbSquads.push(d);});
     console.log('Squads loaded from Firestore:',fbSquads.length);
     // Merge: Firestore is source of truth for synced squads
     const merged=[...state.squads];
@@ -983,7 +1049,7 @@ function reloadSquads(){
   document.querySelectorAll('[data-action="refresh-squads"]').forEach(b=>{b.disabled=true;b.style.opacity='.5';b.textContent='⌛ Refreshing...';});
   db.collection('squads').get({source:'server'}).then(snap=>{
     const fbSquads=[];
-    snap.forEach(doc=>fbSquads.push(doc.data()));
+    snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbSquads.push(d);});
     state.squads=fbSquads;
     persist();
     _refreshingSquads=false;
@@ -1022,7 +1088,7 @@ function pushSquadsToCloud(){
         region:sq.region||'',
         group:sq.group||'',
         players:sq.players.map(p=>({id:p.id,name:p.name,skills:p.skills||[]})),
-        updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+        schemaVersion:SCHEMA_VERSION,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
         updatedBy:fbUid
       },{merge:true}).then(()=>{succeeded++;}).catch(e=>{failed++;errors.push(sq.region+' / '+sq.group+': '+e.message);});
     });
@@ -2021,7 +2087,7 @@ function refreshScheduledMatches(){
   if(!db)return;
   db.collection('matches').where('complete','==',false).limit(50).get().then(snap=>{
     const fbActive=[];
-    snap.forEach(doc=>fbActive.push(doc.data()));
+    snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbActive.push(d);});
     state.activeMatches=fbActive;
     render();
   }).catch(()=>{});
@@ -3810,6 +3876,11 @@ function renderSyncSettings(){
       <div class="light-nav-row">
         <button class="light-btn-secondary" onclick="state.screen='home';render()">← Back</button>
       </div>
+
+      <div style="text-align:center;margin-top:20px;padding:12px;font-size:10px;color:var(--home-muted);font-family:var(--fu);letter-spacing:1px;">
+        PITCHUP v${APP_VERSION} · SCHEMA ${SCHEMA_VERSION}<br>
+        ${fbUid?'UID '+fbUid.slice(0,12):''}
+      </div>
     </div>
   </div>`;
 }
@@ -5163,16 +5234,67 @@ document.addEventListener('visibilitychange',()=>{
   }
 });
 
-if('serviceWorker' in navigator){
-  try{
-    const sw=`const C='pitchup-v1';const U=['/'];
-self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(U)).then(()=>self.skipWaiting()));});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
-self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>caches.match('/'))));});`;
-    const blob=new Blob([sw],{type:'application/javascript'});
-    navigator.serviceWorker.register(URL.createObjectURL(blob),{scope:'/'}).catch(()=>{});
-  }catch(e){}
+// Register the service worker + detect updates
+let _newSwWaiting=null;
+function registerServiceWorker(){
+  if(!('serviceWorker' in navigator))return;
+  // Try loading a real sw.js file; fall back silently if not found
+  navigator.serviceWorker.register('/sw.js',{scope:'/'}).then(reg=>{
+    // Check for updates every 30 min
+    setInterval(()=>{reg.update().catch(()=>{});},30*60*1000);
+    // Listen for new SW waiting
+    reg.addEventListener('updatefound',()=>{
+      const nw=reg.installing;
+      if(!nw)return;
+      nw.addEventListener('statechange',()=>{
+        if(nw.state==='installed'&&navigator.serviceWorker.controller){
+          _newSwWaiting=nw;
+          showUpdateBanner();
+        }
+      });
+    });
+  }).catch(()=>{});
+
+  // When the active SW changes (new version took over), reload once
+  let _swReloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(_swReloaded)return;
+    _swReloaded=true;
+    // Small delay so toasts/renders can finish
+    setTimeout(()=>location.reload(),100);
+  });
+
+  // Messages from SW
+  navigator.serviceWorker.addEventListener('message',e=>{
+    if(e.data&&e.data.type==='SW_UPDATED'){
+      console.log('Service worker updated:',e.data.version);
+    }
+  });
 }
+registerServiceWorker();
+
+// Override showUpdateBanner from schema section to also handle SW updates
+(function(){
+  const orig=showUpdateBanner;
+  showUpdateBanner=function(){
+    if(document.getElementById('update-banner'))return;
+    const el=document.createElement('div');
+    el.id='update-banner';
+    el.style.cssText='position:fixed;top:0;left:0;right:0;background:#d97706;color:#fff;padding:10px 14px;z-index:999;font-family:var(--fu);font-size:13px;font-weight:700;display:flex;gap:10px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+    el.innerHTML='<span style="flex:1;">⬆️ New version available</span>'+
+      '<button onclick="applyUpdate();" style="background:#fff;color:#d97706;border:none;padding:6px 12px;border-radius:6px;font-family:var(--fu);font-weight:700;font-size:12px;cursor:pointer;">Update Now</button>';
+    document.body.appendChild(el);
+  };
+})();
+
+function applyUpdate(){
+  if(_newSwWaiting){
+    _newSwWaiting.postMessage({type:'SKIP_WAITING'});
+  }else{
+    location.reload();
+  }
+}
+window.applyUpdate=applyUpdate;
 
 // ─── VIEWER MODE — read-only live scoreboard ────────────────────────────────
 function renderViewer(){
@@ -5324,6 +5446,16 @@ function renderViewer(){
     </div>
   </div>`;
 }
+
+// ─── Global error handlers (reports to Sentry if enabled, logs always) ───────
+window.addEventListener('error',e=>{
+  console.error('Unhandled error:',e.error||e.message);
+  sentryCapture(e.error||new Error(e.message),{source:'window.onerror'});
+});
+window.addEventListener('unhandledrejection',e=>{
+  console.error('Unhandled promise rejection:',e.reason);
+  sentryCapture(e.reason instanceof Error?e.reason:new Error(String(e.reason)),{source:'unhandledrejection'});
+});
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 detectViewerMode();

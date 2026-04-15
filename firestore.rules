@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ────────────────────────────────────────────────────────────────
+    // Helpers
+    // ────────────────────────────────────────────────────────────────
+    function isSignedIn() { return request.auth != null; }
+    function isEmailUser() { return isSignedIn() && request.auth.token.email != null; }
+    function myUid() { return request.auth.uid; }
+    function myEmail() { return request.auth.token.email; }
+
+    // Hardcoded admin emails (matches ADMIN_EMAILS in pitchup.html)
+    function isAdmin() {
+      return isEmailUser() && (
+        myEmail() == 'vijay.iyer@thinkviz.com'
+        || (
+          exists(/databases/$(database)/documents/users/$(myUid()))
+          && get(/databases/$(database)/documents/users/$(myUid())).data.role == 'admin'
+        )
+      );
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // users — each user can read/write only their own profile; admins read all
+    // ────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isSignedIn() && (userId == myUid() || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isEmailUser() && userId == myUid();
+      // Users can update their own profile except role; admins can change role
+      allow update: if isEmailUser() && (
+        (userId == myUid() && request.resource.data.role == resource.data.role)
+        || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // matches — readable by signed-in users (anon viewers can read),
+    // writable only by signed-in email users (coaches)
+    // ────────────────────────────────────────────────────────────────
+    match /matches/{matchId} {
+      // Anyone signed in (including anonymous viewers via ?view=) can read
+      allow read: if isSignedIn();
+      // Only email users can create/update/delete matches
+      allow create, update: if isEmailUser();
+      allow delete: if isAdmin();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // teams — email users can read and write
+    // ────────────────────────────────────────────────────────────────
+    match /teams/{teamId} {
+      allow read: if isEmailUser();
+      allow create, update: if isEmailUser();
+      allow delete: if isEmailUser();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // squads — visibility is enforced client-side; server requires auth
+    // ────────────────────────────────────────────────────────────────
+    match /squads/{squadId} {
+      allow read: if isEmailUser();
+      allow create: if isEmailUser();
+      // Only creator or admin can update/delete
+      allow update, delete: if isEmailUser() && (
+        isAdmin() || resource.data.createdBy == myUid()
+      );
+    }
+  }
+}
