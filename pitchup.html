@@ -1055,7 +1055,7 @@ function getDeviceId(){
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const initBatter=(n,id)=>({id,name:n,runs:0,balls:0,fours:0,sixes:0,out:false,retired:false,retireCount:0,dismissal:''});
+const initBatter=(n,id)=>({id,name:n,runs:0,balls:0,fours:0,sixes:0,out:false,retired:false,retireCount:0,dismissal:'',outsCount:0,dismissalHistory:[]});
 const initBowler=(n,id)=>({id,name:n,balls:0,runs:0,wickets:0,wides:0,noBalls:0,retiredInjured:false,retireReason:''});
 const overStr=(b,bpo=6)=>`${Math.floor(b/bpo)}.${b%bpo}`;
 const escHtml=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1306,7 +1306,8 @@ function scoreWicket(outId,type,runs,fielder){
     const bt=inn.batters.find(b=>b.id===outId);
     if(bt){
       bt.out=true;bt.balls+=1;bt.runs+=runs;
-      // Build structured dismissal
+      bt.outsCount=(bt.outsCount||0)+1;
+      bt.outAt=Date.now();
       let dis='';
       if(type==='Bowled')dis=`b ${bw?.name||''}`;
       else if(type==='Caught')dis=`c ${fielder||'?'} b ${bw?.name||''}`;
@@ -1321,7 +1322,9 @@ function scoreWicket(outId,type,runs,fielder){
       bt.dismissalBowler=bw?.name||'';
     }
     if(bw&&type!=='Run Out'){bw.wickets+=1;bw.balls+=1;}
-    inn.total+=runs;inn.wickets+=1;inn.legalBalls+=1;
+    inn.total+=runs;inn.legalBalls+=1;
+    // Recompute wickets from current out-batters (handles junior return-to-bat rule)
+    inn.wickets=inn.batters.filter(b=>b.out).length;
     inn.currentBatters=inn.currentBatters.map(id=>id===outId?null:id);
     inn.deliveries.push({over:inn.overs,ball:inn.legalBalls%bpo,bowler:bw?.name,batter:bt?.name,event:`W (${type})`,runs,isWicket:true,fielder:fielder||''});
     if(inn.legalBalls%bpo===0){inn.overs+=1;inn.currentBatters=[inn.currentBatters[1],inn.currentBatters[0]];}
@@ -1674,6 +1677,41 @@ function selectNewBatter(id){
   }
 }
 window.selectNewBatter=selectNewBatter;
+
+function selectReturningOutBatter(id){
+  // Junior rule: previously-out batter comes back to bat
+  updateInn(inn=>{
+    const nb=inn.batters.find(b=>b.id===id);
+    const slot=inn.currentBatters.findIndex(x=>x===null);
+    if(nb&&slot!==-1){
+      // Archive the current dismissal to history (so it's not lost)
+      if(!nb.dismissalHistory)nb.dismissalHistory=[];
+      if(nb.dismissal){
+        nb.dismissalHistory.push({
+          dismissal:nb.dismissal,
+          dismissalType:nb.dismissalType||'',
+          dismissalFielder:nb.dismissalFielder||'',
+          dismissalBowler:nb.dismissalBowler||'',
+          atRuns:nb.runs,atBalls:nb.balls,
+        });
+      }
+      // Reset out flag, keep accumulated stats — they continue batting
+      nb.out=false;
+      nb.dismissal='';nb.dismissalType='';nb.dismissalFielder='';nb.dismissalBowler='';
+      inn.currentBatters[slot]=nb.id;
+    }
+    // Recompute wicket count from batters that are currently out
+    inn.wickets=inn.batters.filter(b=>b.out).length;
+    return inn;
+  });
+  if(_pendingNextBowler){
+    _pendingNextBowler=false;
+    openModal('nextbowler',{});
+  }else{
+    closeModal();
+  }
+}
+window.selectReturningOutBatter=selectReturningOutBatter;
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 let showScorecard=false;
@@ -2775,7 +2813,12 @@ function renderScorecard(inn,teamName,bpo){
     const sr=b.balls>0?((b.runs/b.balls)*100).toFixed(0):'-';
     const nc=isA?'td-active':b.retired?'td-retired':'td-normal';
     const pre=isA?'⚡ ':b.retired?'🏃 ':'';
-    const sub=(b.out||b.retired)?`<div class="td-sub">${b.retired?'retired not out':escHtml(b.dismissal)}</div>`:'';
+    const outsCount=b.outsCount||0;
+    const outsLabel=outsCount>1?` · out ×${outsCount}`:'';
+    let sub='';
+    if(b.retired)sub=`<div class="td-sub">retired not out</div>`;
+    else if(b.out)sub=`<div class="td-sub">${escHtml(b.dismissal)}${outsLabel}</div>`;
+    else if(outsCount>0)sub=`<div class="td-sub" style="color:#b45309;">back after being out${outsCount>1?' ×'+outsCount:''}</div>`;
     br+=`<tr><td><span class="${nc}">${pre}${escHtml(b.name)}</span>${sub}</td>
       <td class="td-runs">${b.runs}</td><td class="td-stat">${b.balls}</td>
       <td class="td-stat">${b.fours}</td><td class="td-stat">${b.sixes}</td><td class="td-stat">${sr}</td></tr>`;
@@ -3050,8 +3093,12 @@ function renderNewBatterModal(data){
   const inn=getInn();
   const fresh=inn.batters.filter(b=>!b.out&&!b.retired&&!inn.currentBatters.includes(b.id));
   const retiredNotOut=inn.batters.filter(b=>!b.out&&b.retired&&!inn.currentBatters.includes(b.id))
-    .sort((a,b)=>(a.retiredAt||0)-(b.retiredAt||0)); // earliest retired first, most recent last
-  const avail=[...fresh,...retiredNotOut];
+    .sort((a,b)=>(a.retiredAt||0)-(b.retiredAt||0));
+  const playToFull=getRules().playToFullOvers;
+  // When 'Play to full overs' is on and no fresh/retired, allow previously-out batters to return
+  const outBatters=playToFull?inn.batters.filter(b=>b.out&&!inn.currentBatters.includes(b.id))
+    .sort((a,b)=>(a.outsCount||1)-(b.outsCount||1)||(a.outAt||0)-(b.outAt||0)):[];
+  const avail=[...fresh,...retiredNotOut,...(fresh.length===0&&retiredNotOut.length===0?outBatters:[])];
   const isRetired=data?.reason==='retired';
   let listHtml='';
   if(avail.length===0){
@@ -3071,6 +3118,17 @@ function renderNewBatterModal(data){
         <span class="mitem-name">${escHtml(b.name)}</span>
         <span class="mitem-meta" style="color:#7c3aed;">${b.runs}(${b.balls}) · retired${(b.retireCount||0)>1?' ×'+(b.retireCount||0):''}</span>
       </div>`).join('');
+    }
+    // Only show previously-out batters if rule is on AND no fresh/retired available
+    if(fresh.length===0&&retiredNotOut.length===0&&outBatters.length>0){
+      items+=`<div style="font-size:11px;color:#dc2626;font-family:var(--fu);font-weight:700;letter-spacing:1px;margin:8px 0 4px;text-transform:uppercase;">Previously Out (Junior Rule — can bat again)</div>`;
+      items+=outBatters.map(b=>{
+        const outsCount=b.outsCount||1;
+        return `<div class="mitem" style="border-color:#fecaca;" onclick="selectReturningOutBatter('${b.id}')">
+          <span class="mitem-name">${escHtml(b.name)}</span>
+          <span class="mitem-meta" style="color:#dc2626;">${b.runs}(${b.balls}) · out${outsCount>1?' ×'+outsCount:''}</span>
+        </div>`;
+      }).join('');
     }
     listHtml=`<div class="modal-list">${items}</div>`;
   }
