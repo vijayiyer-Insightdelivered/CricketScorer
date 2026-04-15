@@ -414,7 +414,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;}
 <script>
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
-const DEFAULT_RULES={ballsPerOver:6,wideRuns:1,wideBowlAgain:true,noBallRuns:1,noBallBowlAgain:true,retirementScore:0,maxOversPerBowler:0};
+const DEFAULT_RULES={ballsPerOver:6,wideRuns:1,wideBowlAgain:true,noBallRuns:1,noBallBowlAgain:true,retirementScore:0,maxOversPerBowler:0,playToFullOvers:false};
 const STORAGE_KEY='pitchup_v1';
 const WICKET_TYPES=['Bowled','Caught','LBW','Run Out','Stumped','Hit Wicket','Retired'];
 const RETIRE_REASONS=['Injury','Illness','Coach decision','Other'];
@@ -1340,7 +1340,17 @@ window.swapBowlers=swapBowlers;
 function isInningsOver(){
   const inn=getInn();if(!inn)return false;
   const bp=state.currentInnings===0?state.match.playersA:state.match.playersB;
-  return inn.wickets>=bp.length-1||inn.legalBalls>=state.match.totalOvers*getBpo();
+  const allOversBowled=inn.legalBalls>=state.match.totalOvers*getBpo();
+  if(allOversBowled)return true;
+  const rules=getRules();
+  if(rules.playToFullOvers){
+    // Keep playing: only all-out ends innings if no retired batters available to return
+    const allOut=inn.wickets>=bp.length-1;
+    if(!allOut)return false;
+    const anyRetiredAvailable=inn.batters.some(b=>!b.out&&b.retired&&!inn.currentBatters.includes(b.id));
+    return !anyRetiredAvailable; // only end if no one left
+  }
+  return inn.wickets>=bp.length-1;
 }
 
 function endInnings(){
@@ -2336,6 +2346,10 @@ function renderRulesConfig(r){
         <button class="stepper-btn" onclick="retirementInc()">+</button>
         ${r.retirementScore>0?`<button style="background:none;border:1px solid var(--border);border-radius:7px;color:var(--home-muted);padding:4px 9px;cursor:pointer;font-size:11px;" onclick="stepRule('retirementScore',-100,0,100)">Off</button>`:''}
       </div>
+    </div>
+    <div class="rules-sec" style="background:rgba(22,163,74,.04);border:1px solid rgba(22,163,74,.18);">
+      <div class="rules-sec-title" style="color:var(--grass);">👶 Junior Cricket</div>
+      ${tog('playToFullOvers','Play to full overs','Keep playing even if all out or target chased — gives kids more game time','#166534')}
     </div>`;
 }
 
