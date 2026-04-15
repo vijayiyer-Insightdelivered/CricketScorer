@@ -41,8 +41,11 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-<!-- Sentry error tracking — config via SENTRY_DSN constant below; leave empty to disable -->
-<script src="https://browser.sentry-cdn.com/7.119.2/bundle.tracing.min.js" crossorigin="anonymous"></script>
+<!-- Sentry error tracking (Loader Script auto-initialises) -->
+<script
+  src="https://js-de.sentry-cdn.com/9259ba06d0782935a0a734add3fa812b.min.js"
+  crossorigin="anonymous"
+></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600&display=swap');
 :root{
@@ -440,29 +443,24 @@ function showUpdateBanner(){
 }
 
 // ─── Sentry Error Tracking ────────────────────────────────────────────────────
-// To enable: paste your Sentry DSN here (Sentry → Project Settings → Client Keys)
-// When empty, Sentry is disabled and app runs normally.
-const SENTRY_DSN='';
-try{
-  if(SENTRY_DSN&&typeof Sentry!=='undefined'){
-    Sentry.init({
-      dsn:SENTRY_DSN,
-      release:'pitchup@'+APP_VERSION,
-      environment:window.location.hostname.includes('railway')||window.location.hostname.includes('github.io')?'production':'local',
-      tracesSampleRate:0.1,
-      ignoreErrors:[
-        'ResizeObserver loop limit exceeded',
-        'Non-Error promise rejection captured',
-        /firestore.*offline/i,
-      ],
+// Using Sentry Loader Script (see <head>) which auto-initialises.
+// These helpers enrich events with release/user/context once Sentry loads.
+if(typeof Sentry!=='undefined'&&Sentry.onLoad){
+  try{
+    Sentry.onLoad(function(){
+      Sentry.init({
+        release:'pitchup@'+APP_VERSION,
+        environment:(location.hostname.includes('railway')||location.hostname.includes('github.io'))?'production':'local',
+        ignoreErrors:['ResizeObserver loop limit exceeded','Non-Error promise rejection captured',/firestore.*offline/i],
+      });
+      console.log('Sentry loaded');
     });
-    console.log('Sentry enabled');
-  }
-}catch(e){console.warn('Sentry init failed:',e);}
+  }catch(e){console.warn('Sentry onLoad failed:',e);}
+}
 
 function sentryIdentifyUser(){
   try{
-    if(typeof Sentry==='undefined'||!SENTRY_DSN)return;
+    if(typeof Sentry==='undefined')return;
     if(authUser){
       Sentry.setUser({id:authUser.uid,email:authUser.email,username:authUser.displayName});
     }else{
@@ -472,7 +470,7 @@ function sentryIdentifyUser(){
 }
 function sentryCapture(err,context){
   try{
-    if(typeof Sentry==='undefined'||!SENTRY_DSN)return;
+    if(typeof Sentry==='undefined')return;
     if(context)Sentry.setContext('action',context);
     Sentry.captureException(err);
   }catch(e){}
