@@ -256,3 +256,14 @@ Full instructions: `docs\PitchUp-Hosting-Guide.md`
 **© 2025 ThinkViz Limited. All Rights Reserved.**  
 Registered in England & Wales · Company No. 09906407  
 Do not distribute or modify without written permission.
+
+---
+
+## Shared conventions
+
+Design tokens for the broader portfolio (Insight Delivered + QEA + ThinkViz) live in:
+
+> **`C:\QEA-Shared\DESIGN.md`** — brand family: **ThinkViz** (see section 1.3 for this app's palette)
+
+Cross-cutting guidance (tech stack defaults, git hygiene) is in
+`C:\Users\Murliadharan\.claude\CLAUDE.md` and auto-loads in every session.
