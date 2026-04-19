@@ -1255,6 +1255,30 @@ function updateInn(fn){
   state.match={...m,innings};
 }
 
+// ─── Undo Last Ball ──────────────────────────────────────────────────────────
+let _undoStack=[]; // stack of innings snapshots (max 6)
+const UNDO_MAX=6;
+
+function pushUndo(){
+  const inn=getInn();if(!inn)return;
+  _undoStack.push(JSON.stringify(inn));
+  if(_undoStack.length>UNDO_MAX)_undoStack.shift();
+}
+
+function undoLastBall(){
+  if(!canScore()){toast('Match is locked','error');return;}
+  if(_undoStack.length===0){toast('Nothing to undo','warn');return;}
+  const snapshot=JSON.parse(_undoStack.pop());
+  const m=state.match;
+  const innings=[...m.innings];
+  innings[state.currentInnings]=snapshot;
+  state.match={...m,innings};
+  persist();
+  toast('Last ball undone','success');
+  render();
+}
+window.undoLastBall=undoLastBall;
+
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function exportCSV(match){
   const {teamA,teamB,innings}=match;
@@ -1295,6 +1319,7 @@ window.exportCSV=exportCSV;
 // ─── Scoring actions ──────────────────────────────────────────────────────────
 function scoreRuns(runs){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  pushUndo();
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   let retiredName=null;
   updateInn(inn=>{
@@ -1336,6 +1361,7 @@ window.scoreRuns=scoreRuns;
 
 function scoreExtra(type){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  pushUndo();
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
     const bw=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
@@ -1364,6 +1390,7 @@ window.scoreExtra=scoreExtra;
 
 function scoreWicket(outId,type,runs,fielder){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  pushUndo();
   const bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
     const bw=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
@@ -3014,6 +3041,37 @@ function renderScoring(){
         }).join('')}
       </div>
 
+      <!-- Partnership tracker -->
+      ${(()=>{
+        // Compute current partnership from deliveries since last wicket
+        const dels=inn.deliveries;
+        let lastWktIdx=-1;
+        for(let i=dels.length-1;i>=0;i--){if(dels[i].isWicket){lastWktIdx=i;break;}}
+        const partDels=dels.slice(lastWktIdx+1);
+        const partRuns=partDels.reduce((s,d)=>s+(d.runs||0),0);
+        const partBalls=partDels.filter(d=>!d.isExtra||(d.extraType!=='Wide'&&d.extraType!=='No Ball')).length;
+        const bat0=inn.currentBatters[0]?inn.batters.find(b=>b.id===inn.currentBatters[0]):null;
+        const bat1=inn.currentBatters[1]?inn.batters.find(b=>b.id===inn.currentBatters[1]):null;
+        // Count per-batter runs in partnership
+        let bat0Part=0,bat1Part=0;
+        partDels.forEach(d=>{
+          if(!d.isWicket&&!d.isExtra){
+            if(d.batter===bat0?.name)bat0Part+=d.runs||0;
+            else if(d.batter===bat1?.name)bat1Part+=d.runs||0;
+          }
+        });
+        if(partBalls===0&&partRuns===0)return '';
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;background:#fff;border:1px solid var(--home-border);border-radius:10px;padding:6px 10px;">
+          <div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);font-weight:700;letter-spacing:1px;">PARTNERSHIP</div>
+          <div style="font-family:var(--fd);font-size:16px;font-weight:700;color:var(--home-text);">${partRuns}</div>
+          <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">(${partBalls}b)</div>
+          <div style="flex:1;"></div>
+          ${bat0?`<span style="font-size:10px;font-family:var(--fu);color:var(--home-text);">${escHtml(bat0.name.split(' ')[0])} ${bat0Part}</span>`:''}
+          ${bat0&&bat1?'<span style="color:var(--home-muted);font-size:10px;">·</span>':''}
+          ${bat1?`<span style="font-size:10px;font-family:var(--fu);color:var(--home-text);">${escHtml(bat1.name.split(' ')[0])} ${bat1Part}</span>`:''}
+        </div>`;
+      })()}
+
       <!-- LAYER 3: Bowler stats card with change bowler -->
       ${charlie?`
       <div style="background:rgba(232,168,32,.05);border:1px solid rgba(232,168,32,.15);border-radius:12px;padding:10px 12px;margin-bottom:8px;">
@@ -3106,9 +3164,10 @@ function renderScoring(){
     <div class="topbar dark">
       <span style="font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;color:var(--grass3);">${escHtml(batTeam)} vs ${escHtml(bowlTeam)}</span>
       <div class="topbar-actions">
+        ${!locked&&_undoStack.length>0?`<button class="tbtn dark" onclick="undoLastBall()" title="Undo last ball" style="color:#f87171;">↩</button>`:''}
         ${!locked?`<button class="tbtn dark" onclick="openTransferModal()" title="Transfer scoring">🔄</button>`:''}
-        <button class="tbtn dark" onclick="openShareModal()">📡 Share</button>
-        <button class="tbtn dark" onclick="toggleScorecard()">${showScorecard?'▶ Score':'📋 Card'}</button>
+        <button class="tbtn dark" onclick="openShareModal()">📡</button>
+        <button class="tbtn dark" onclick="toggleScorecard()">${showScorecard?'▶':'📋'}</button>
         <button class="tbtn gold" onclick="exportCSV(state.match)">📥</button>
       </div>
     </div>
@@ -5192,9 +5251,10 @@ function renderResult(){
           </div>`:''}
       </div>
 
-      <div class="nav-row">
-        <button class="btn-secondary" onclick="state.screen='home';state.match=null;state.currentInnings=0;render()">🏠 Home</button>
-        <button class="btn-primary" onclick="exportCSV(state.match)">📥 Export CSV</button>
+      <div class="nav-row" style="flex-wrap:wrap;gap:8px;">
+        <button class="btn-secondary" style="flex:1;min-width:120px;" onclick="state.screen='home';state.match=null;state.currentInnings=0;render()">🏠 Home</button>
+        <button class="btn-primary" style="flex:1;min-width:120px;" onclick="exportCSV(state.match)">📥 CSV</button>
+        <button class="btn-primary" style="flex:1;min-width:120px;background:#2563eb;" onclick="shareMatchSummary()">📤 Share Summary</button>
       </div>
     </div>
   </div>`;
@@ -5443,6 +5503,145 @@ function renderViewer(){
       </div>
     </div>
   </div>`;
+}
+
+// ─── Match Summary Image Export ──────────────────────────────────────────────
+function shareMatchSummary(){
+  const m=state.match;if(!m)return;
+  const bpo=(m.rules||DEFAULT_RULES).ballsPerOver||6;
+  const i1=m.innings?.[0],i2=m.innings?.[1];
+  const s1=i1?.total||0,s2=i2?.total||0;
+  const winner=s1>s2?m.teamA:s2>s1?m.teamB:'Tie';
+  const margin=winner===m.teamA?`by ${s1-s2} runs`:winner===m.teamB?`by ${(m.playersB?.length||11)-1-(i2?.wickets||0)} wickets`:'';
+
+  // Canvas-based image generation (no external dependency)
+  const W=420,pad=20;
+  const c=document.createElement('canvas');
+  const ctx=c.getContext('2d');
+
+  // Measure content first, then set height
+  const lineH=18,secGap=14,headerH=60,scoreH=50,batLineH=16,bowlLineH=16;
+  const batters1=(i1?.batters||[]).filter(b=>b.balls>0||b.out);
+  const batters2=(i2?.batters||[]).filter(b=>b.balls>0||b.out);
+  const bowlers1=(i1?.bowlers||[]).filter(b=>b.balls>0);
+  const bowlers2=(i2?.bowlers||[]).filter(b=>b.balls>0);
+  const totalH=pad+headerH+scoreH+secGap+
+    20+(batters1.length+1)*batLineH+10+(bowlers1.length+1)*bowlLineH+secGap+
+    (i2?20+(batters2.length+1)*batLineH+10+(bowlers2.length+1)*bowlLineH+secGap:0)+
+    30+pad;
+  c.width=W;c.height=totalH;
+
+  // Background
+  ctx.fillStyle='#f0f7f2';ctx.fillRect(0,0,W,totalH);
+
+  let y=pad;
+  // Header
+  ctx.fillStyle='#166534';ctx.font='bold 10px Rajdhani,sans-serif';ctx.textAlign='center';
+  ctx.fillText('PITCHUP · MATCH SUMMARY',W/2,y+10);
+  ctx.fillStyle='#0f172a';ctx.font='bold 20px Oswald,sans-serif';
+  ctx.fillText(m.teamA+' vs '+m.teamB,W/2,y+36);
+  ctx.fillStyle='#64748b';ctx.font='11px Rajdhani,sans-serif';
+  const dateStr=m.date?new Date(m.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}):'';
+  ctx.fillText(m.totalOvers+' overs · '+(m.bowlingMode==='charlie'?'Charlie Cricket':'Standard')+
+    (m.venue?' · '+m.venue:'')+(dateStr?' · '+dateStr:''),W/2,y+52);
+  y+=headerH;
+
+  // Result banner
+  ctx.fillStyle='#166534';ctx.fillRect(pad,y,W-pad*2,scoreH);
+  ctx.fillStyle='#fff';ctx.font='bold 22px Oswald,sans-serif';ctx.textAlign='center';
+  ctx.fillText(winner==='Tie'?'TIE!':'🏆 '+winner.toUpperCase()+' WIN!',W/2,y+28);
+  if(margin){ctx.font='13px Rajdhani,sans-serif';ctx.fillText(margin,W/2,y+44);}
+  y+=scoreH+secGap;
+
+  // Scorecard rendering helper
+  function drawInnings(inn,teamName){
+    if(!inn)return;
+    const bats=inn.batters.filter(b=>b.balls>0||b.out);
+    const bwls=inn.bowlers.filter(b=>b.balls>0);
+    // Team header
+    ctx.fillStyle='#0f172a';ctx.font='bold 14px Oswald,sans-serif';ctx.textAlign='left';
+    ctx.fillText(teamName+' — '+inn.total+'/'+inn.wickets+' ('+overStr(inn.legalBalls,bpo)+')',pad,y+14);
+    y+=20;
+    // Batting header
+    ctx.fillStyle='#64748b';ctx.font='bold 10px Rajdhani,sans-serif';
+    ctx.fillText('Batter',pad,y+12);
+    ctx.textAlign='right';
+    ctx.fillText('R',W-pad-120,y+12);ctx.fillText('B',W-pad-90,y+12);
+    ctx.fillText('4s',W-pad-60,y+12);ctx.fillText('6s',W-pad-30,y+12);
+    ctx.fillText('SR',W-pad,y+12);
+    y+=batLineH;
+    // Batting rows
+    bats.forEach(b=>{
+      const sr=b.balls>0?((b.runs/b.balls)*100).toFixed(0):'-';
+      ctx.fillStyle=b.out?'#dc2626':'#0f172a';
+      ctx.font='11px Source Sans 3,sans-serif';ctx.textAlign='left';
+      ctx.fillText(b.name,pad,y+12);
+      ctx.fillStyle='#0f172a';ctx.textAlign='right';
+      ctx.font='bold 11px Oswald,sans-serif';
+      ctx.fillText(String(b.runs),W-pad-120,y+12);
+      ctx.font='11px Source Sans 3,sans-serif';ctx.fillStyle='#64748b';
+      ctx.fillText(String(b.balls),W-pad-90,y+12);
+      ctx.fillText(String(b.fours||0),W-pad-60,y+12);
+      ctx.fillText(String(b.sixes||0),W-pad-30,y+12);
+      ctx.fillText(sr,W-pad,y+12);
+      y+=batLineH;
+    });
+    // Extras
+    ctx.fillStyle='#64748b';ctx.font='10px Rajdhani,sans-serif';ctx.textAlign='left';
+    ctx.fillText('Extras: '+inn.extras.total+' (W:'+inn.extras.wides+' NB:'+inn.extras.noBalls+' B:'+inn.extras.byes+' LB:'+inn.extras.legByes+')',pad,y+10);
+    y+=14;
+    // Bowling header
+    ctx.fillStyle='#64748b';ctx.font='bold 10px Rajdhani,sans-serif';ctx.textAlign='left';
+    ctx.fillText('Bowler',pad,y+12);
+    ctx.textAlign='right';
+    ctx.fillText('O',W-pad-120,y+12);ctx.fillText('R',W-pad-90,y+12);
+    ctx.fillText('W',W-pad-60,y+12);ctx.fillText('Econ',W-pad,y+12);
+    y+=bowlLineH;
+    bwls.forEach(b=>{
+      const econ=b.balls>0?(b.runs/(b.balls/bpo)).toFixed(1):'-';
+      ctx.fillStyle='#0f172a';ctx.font='11px Source Sans 3,sans-serif';ctx.textAlign='left';
+      ctx.fillText(b.name,pad,y+12);
+      ctx.textAlign='right';ctx.fillStyle='#64748b';
+      ctx.fillText(overStr(b.balls,bpo),W-pad-120,y+12);
+      ctx.fillText(String(b.runs),W-pad-90,y+12);
+      ctx.fillStyle='#166534';ctx.font='bold 11px Oswald,sans-serif';
+      ctx.fillText(String(b.wickets),W-pad-60,y+12);
+      ctx.fillStyle='#64748b';ctx.font='11px Source Sans 3,sans-serif';
+      ctx.fillText(econ,W-pad,y+12);
+      y+=bowlLineH;
+    });
+    y+=secGap;
+  }
+
+  drawInnings(i1,m.teamA);
+  drawInnings(i2,m.teamB);
+
+  // Footer
+  ctx.fillStyle='#94a3b8';ctx.font='9px Rajdhani,sans-serif';ctx.textAlign='center';
+  ctx.fillText('Generated by PitchUp · pitchup.up.railway.app',W/2,y+10);
+
+  // Convert to image and share/download
+  c.toBlob(blob=>{
+    if(!blob)return;
+    const file=new File([blob],m.teamA+'_vs_'+m.teamB+'_summary.png',{type:'image/png'});
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      navigator.share({
+        title:'Match Summary: '+m.teamA+' vs '+m.teamB,
+        text:winner==='Tie'?'TIE!':winner+' won '+margin,
+        files:[file]
+      }).catch(()=>{downloadBlob(blob,file.name);});
+    }else{
+      downloadBlob(blob,file.name);
+    }
+  },'image/png');
+}
+window.shareMatchSummary=shareMatchSummary;
+
+function downloadBlob(blob,filename){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=filename;
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  toast('Summary image saved','success');
 }
 
 // ─── Global error handlers (reports to Sentry if enabled, logs always) ───────
