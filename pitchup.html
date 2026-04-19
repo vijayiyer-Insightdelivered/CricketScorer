@@ -2038,26 +2038,19 @@ function renderHome(){
   }
 
   return `<div class="screen light active">
-    <div class="home-topbar">
-      <div class="home-logo-row">
-        <div class="home-logo-icon">🏏</div>
-        <div>
-          <div class="home-logo-name">PITCH<em>UP</em></div>
-          <div class="home-logo-tag">Junior Cricket · Player Development · by ThinkViz</div>
-        </div>
+    <div class="home-topbar" style="flex-wrap:wrap;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+        <div class="home-logo-icon" style="width:32px;height:32px;border-radius:10px;font-size:16px;">🏏</div>
+        <div class="home-logo-name" style="font-size:20px;">PITCH<em>UP</em></div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;">
-        ${isLoggedIn()?`<div style="display:flex;align-items:center;gap:6px;background:${isAdmin()?'#fffbeb':'#f0fdf4'};border:1px solid ${isAdmin()?'#fde68a':'#bbf7d0'};border-radius:9px;padding:5px 10px;">
-          <div style="width:24px;height:24px;border-radius:50%;background:${isAdmin()?'linear-gradient(135deg,#d97706,#b45309)':'linear-gradient(135deg,var(--grass),var(--grass2))'};display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;font-family:var(--fd);font-weight:700;">${escHtml((authUser?.displayName||authUser?.email||'?').slice(0,2).toUpperCase())}</div>
-          <div style="line-height:1.2;">
-            <div style="font-family:var(--fu);font-size:11px;font-weight:700;color:var(--home-text);">${escHtml(authUser?.displayName||authUser?.email||'')}</div>
-            <div style="font-size:8px;font-family:var(--fu);font-weight:700;letter-spacing:1.5px;color:${isAdmin()?'#b45309':'var(--grass)'};">${isAdmin()?'ADMIN':'STANDARD'}</div>
-          </div>
-        </div>`:''}
-        <button onclick="state.screen='teams';render()" style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:9px;color:var(--grass2);padding:7px 12px;cursor:pointer;font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.5px;">👥</button>
-        <button onclick="state.screen='help';helpSearch='';render()" style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:9px;color:#2563eb;padding:7px 10px;cursor:pointer;font-size:14px;" title="Help Guide">❓</button>
-        <button onclick="state.screen='sync_settings';render()" style="background:#f1f5f9;border:1.5px solid var(--home-border);border-radius:9px;color:#475569;padding:7px 10px;cursor:pointer;font-size:14px;">⚙️</button>
-        <button onclick="doLogout()" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:9px;color:#dc2626;padding:7px 10px;cursor:pointer;font-size:12px;" title="Sign out">🚪</button>
+      <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
+        ${isLoggedIn()?`<button onclick="state.screen='sync_settings';render()" style="display:flex;align-items:center;gap:4px;background:${isAdmin()?'#fffbeb':'#f0fdf4'};border:1px solid ${isAdmin()?'#fde68a':'#bbf7d0'};border-radius:8px;padding:4px 8px;cursor:pointer;font-size:10px;font-family:var(--fu);font-weight:700;color:${isAdmin()?'#b45309':'var(--grass)'};">
+          <div style="width:20px;height:20px;border-radius:50%;background:${isAdmin()?'linear-gradient(135deg,#d97706,#b45309)':'linear-gradient(135deg,var(--grass),var(--grass2))'};display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff;font-family:var(--fd);font-weight:700;">${escHtml((authUser?.displayName||authUser?.email||'?').slice(0,2).toUpperCase())}</div>
+          ${escHtml((authUser?.displayName||'').split(' ')[0]||authUser?.email?.split('@')[0]||'')}
+        </button>`:''}
+        <button onclick="state.screen='help';helpSearch='';render()" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;color:#2563eb;padding:5px 8px;cursor:pointer;font-size:12px;" title="Help">❓</button>
+        <button onclick="state.screen='sync_settings';render()" style="background:#f1f5f9;border:1px solid var(--home-border);border-radius:8px;color:#475569;padding:5px 8px;cursor:pointer;font-size:12px;">⚙️</button>
+        <button onclick="doLogout()" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#dc2626;padding:5px 8px;cursor:pointer;font-size:12px;" title="Sign out">🚪</button>
       </div>
     </div>
     <div class="screen-inner light" style="padding:0 0 40px;">
@@ -2128,8 +2121,8 @@ function renderHome(){
           </div>
         </div>`:''}
       <div class="home-footer">
-        <div class="home-footer-text">PITCHUP · A PRODUCT OF THINKVIZ LIMITED · © 2025 ALL RIGHTS RESERVED</div>
-        <div style="font-size:9px;color:#6b8a74;font-family:'Rajdhani',sans-serif;letter-spacing:1px;margin-top:4px;">Reg. in England & Wales · Junior Cricket Management Platform</div>
+        <div class="home-footer-text">PITCHUP v${APP_VERSION} · A PRODUCT OF THINKVIZ LIMITED</div>
+        <div style="font-size:9px;color:#6b8a74;font-family:'Rajdhani',sans-serif;letter-spacing:1px;margin-top:4px;">© 2025 ThinkViz Limited · Reg. in England & Wales<br>Junior Cricket Management Platform</div>
       </div>
     </div>
   </div>`;
