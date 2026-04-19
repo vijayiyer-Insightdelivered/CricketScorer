@@ -1,0 +1,19 @@
+{
+  "name": "PitchUp",
+  "short_name": "PitchUp",
+  "description": "Junior Cricket Management Platform",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f0f7f2",
+  "theme_color": "#f0f7f2",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232a9152'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>🏏</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
