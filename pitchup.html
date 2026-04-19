@@ -479,7 +479,7 @@ function sentryCapture(err,context){
 const DEFAULT_RULES={ballsPerOver:6,wideRuns:1,wideBowlAgain:true,noBallRuns:1,noBallBowlAgain:true,retirementScore:0,maxOversPerBowler:0,playToFullOvers:false};
 const STORAGE_KEY='pitchup_v1';
 const WICKET_TYPES=['Bowled','Caught','LBW','Run Out','Stumped','Hit Wicket','Retired'];
-const RETIRE_REASONS=['Injury','Illness','Coach decision','Other'];
+const RETIRE_REASONS=['By Mistake','Coach decision','Injury','Illness','Other'];
 
 // ─── Firebase ────────────────────────────────────────────────────────────────
 const firebaseConfig={
@@ -1750,7 +1750,7 @@ function applyStriker(id){
 window.applyStriker=applyStriker;
 
 // ─── Bowler retirement ────────────────────────────────────────────────────────
-let retireBowlerState={slot:null,reason:'Injury'};
+let retireBowlerState={slot:null,reason:'By Mistake'};
 function setRetireSlot(s){retireBowlerState.slot=s;render();}
 window.setRetireSlot=setRetireSlot;
 function setRetireReason(r){retireBowlerState.reason=r;render();}
@@ -1760,13 +1760,24 @@ function confirmRetireBowler(){
   updateInn(inn=>{
     const bId=inn.charlieBowlers[slot];
     const b=inn.bowlers.find(x=>x.id===bId);
-    if(b){b.retiredInjured=true;b.retireReason=reason;}
+    if(b&&reason!=='By Mistake'){
+      // Mark as retired only for actual reasons (not mistake corrections)
+      b.retiredInjured=true;b.retireReason=reason;
+    }
+    // Clear the slot — replacement modal will follow
     inn.charlieBowlers[slot]=null;return inn;
   });
   state.modal={type:'replaceBowler',data:{slot}};
-  retireBowlerState={slot:null,reason:'Injury'};render();
+  retireBowlerState={slot:null,reason:'By Mistake'};render();
 }
 window.confirmRetireBowler=confirmRetireBowler;
+
+function skipBowlerPick(slot){
+  // Leave the slot empty — coach can assign later via Change Bowler
+  toast('Bowler slot left empty — assign before next ball','warn');
+  closeModal();
+}
+window.skipBowlerPick=skipBowlerPick;
 
 function applyReplaceBowler(name,slot){
   updateInn(inn=>{
@@ -3163,7 +3174,7 @@ function renderScoring(){
       <div style="background:rgba(232,168,32,.05);border:1px solid rgba(232,168,32,.15);border-radius:12px;padding:10px 12px;margin-bottom:8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <span style="font-family:var(--fd);font-size:10px;letter-spacing:2px;color:var(--gold);text-transform:uppercase;font-weight:600;">Bowling Pair</span>
-          <button class="c-retire-btn" style="padding:5px 10px;border-radius:8px;font-size:11px;" onclick="retireBowlerState={slot:null,reason:'Injury'};openModal('retireBowler',{})">🔄 Change</button>
+          <button class="c-retire-btn" style="padding:5px 10px;border-radius:8px;font-size:11px;" onclick="retireBowlerState={slot:null,reason:'By Mistake'};openModal('retireBowler',{})">🔄 Change</button>
         </div>
         <div style="display:flex;gap:8px;">
           <div style="flex:1;background:#f8fafc;border-radius:9px;padding:7px 9px;">
@@ -3184,7 +3195,7 @@ function renderScoring(){
           <span style="font-family:var(--fd);font-size:10px;letter-spacing:2px;color:var(--grass3);text-transform:uppercase;font-weight:600;">Current Bowler</span>
           <div style="display:flex;gap:6px;">
             <button class="swap-btn" onclick="swapBowlers()" style="border-color:rgba(58,181,106,.3);color:var(--grass3);padding:5px 10px;border-radius:8px;font-size:11px;">⇄ Change</button>
-            <button class="c-retire-btn" style="padding:5px 10px;border-radius:8px;font-size:11px;" onclick="retireBowlerState={slot:null,reason:'Injury'};openModal('retireBowler',{})">🔄 Replace</button>
+            <button class="c-retire-btn" style="padding:5px 10px;border-radius:8px;font-size:11px;" onclick="retireBowlerState={slot:null,reason:'By Mistake'};openModal('retireBowler',{})">🔄 Replace</button>
           </div>
         </div>
         <div style="background:#f8fafc;border-radius:9px;padding:8px 10px;">
@@ -3433,7 +3444,8 @@ function renderReplaceBowlerModal(data){
     <div class="modal-title">🔄 Replacement Bowler</div>
     <div class="modal-sub">Who takes the ${data.slot===0?'active':'waiting'} bowling slot?</div>
     ${items}
-    <button class="modal-cancel" onclick="closeModal()">Close</button>
+    <button class="modal-cancel" style="margin-bottom:6px;" onclick="skipBowlerPick(${data.slot})">⏭ Pick Later</button>
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
   </div>`;
 }
 
