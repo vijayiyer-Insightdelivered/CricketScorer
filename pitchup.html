@@ -1849,6 +1849,7 @@ function render(){
   else if(s==='result')html=renderResult();
   else if(s==='sync_settings')html=renderSyncSettings();
   else if(s==='admin_users')html=renderAdminUsers();
+  else if(s==='help')html=renderHelp();
   else if(s==='seasons')html=renderSeasons();
   else if(s==='season_detail')html=renderSeasonDetail();
   else if(s==='player_compare')html=renderPlayerCompare();
@@ -1974,6 +1975,7 @@ function renderHome(){
           </div>
         </div>`:''}
         <button onclick="state.screen='teams';render()" style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:9px;color:var(--grass2);padding:7px 12px;cursor:pointer;font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.5px;">👥</button>
+        <button onclick="state.screen='help';helpSearch='';render()" style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:9px;color:#2563eb;padding:7px 10px;cursor:pointer;font-size:14px;" title="Help Guide">❓</button>
         <button onclick="state.screen='sync_settings';render()" style="background:#f1f5f9;border:1.5px solid var(--home-border);border-radius:9px;color:#475569;padding:7px 10px;cursor:pointer;font-size:14px;">⚙️</button>
         <button onclick="doLogout()" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:9px;color:#dc2626;padding:7px 10px;cursor:pointer;font-size:12px;" title="Sign out">🚪</button>
       </div>
@@ -5944,6 +5946,132 @@ function setPOTM(name){
   render();
 }
 window.setPOTM=setPOTM;
+
+// ─── INTERACTIVE HELP GUIDE ──────────────────────────────────────────────────
+let helpSearch='';
+let helpOpenSection=null;
+
+const HELP_GUIDE=[
+  {cat:'Getting Started',icon:'🏏',items:[
+    {q:'How do I create a match?',a:'From the home screen, tap <strong>NEW MATCH</strong>. Enter team names, select format (T20 or custom overs), set bowling mode (Charlie Cricket or Standard), configure toss, and set match rules. Then add players to each team and tap <strong>Start Match</strong>.'},
+    {q:'What is Charlie Cricket mode?',a:'Charlie Cricket is a tandem bowling format for junior cricket. Two bowlers alternate every delivery — one bowls while the other fields. After each ball, they swap automatically. This gives kids more bowling practice.'},
+    {q:'How do I sign up and log in?',a:'Open the app → tap <strong>Create Account</strong>. Enter your name, email, and a password (min 6 characters). The first person to register becomes Admin; others get Standard User role.'},
+    {q:'What\'s the difference between Admin and Standard User?',a:'<strong>Standard</strong> users can do everything — score matches, manage teams, view stats. <strong>Admin</strong> users additionally get: edit completed matches, delete matches, manage user roles, and access the User Management panel.'},
+    {q:'How do I reset my password?',a:'On the login screen, tap <strong>Forgot Password?</strong>, enter your email, and you\'ll receive a reset link. Note: the email must be registered first.'},
+  ]},
+  {cat:'Scoring a Match',icon:'📊',items:[
+    {q:'How do I score runs?',a:'On the scoring screen, tap the run buttons (<strong>0, 1, 2, 3, 4, 6</strong>) for each delivery. The batter and bowler stats update automatically. Strike rotates on odd runs and at over ends.'},
+    {q:'How do I record extras?',a:'Tap <strong>Wide</strong>, <strong>No Ball</strong>, <strong>Bye</strong>, or <strong>Leg Bye</strong>. Wides and No Balls add runs to extras and may require a re-bowl depending on your match rules.'},
+    {q:'How do I record a wicket?',a:'Tap <strong>WICKET</strong> → select the batter who\'s out, the dismissal type (Bowled, Caught, LBW, Run Out, Stumped, Hit Wicket), the runs scored on that ball, and optionally the fielder. Tap <strong>Confirm</strong>.'},
+    {q:'Can I undo a mistake?',a:'Yes! Tap the red <strong>↩</strong> button in the top bar during scoring. It undoes the last ball completely — batter stats, bowler stats, wickets, everything. You can undo up to 6 balls.'},
+    {q:'What is the partnership tracker?',a:'Between the batter cards and bowler section, you\'ll see <strong>PARTNERSHIP</strong> showing total runs, balls, and each batter\'s contribution since the last wicket. It resets when a wicket falls.'},
+    {q:'How does batter retirement work?',a:'Set <strong>Auto-retire at score</strong> in match rules (e.g. 25). When a batter reaches that score, they retire not out. They can bat again when all other batters have batted. Retirement repeats at multiples (25, 50, 75...).'},
+    {q:'What is "Play to full overs"?',a:'A junior cricket rule (in Match Rules → Junior Cricket). When ON, the innings continues even if all batters are out or the target is chased — giving kids more game time. Out batters can return to bat; their outs still count.'},
+    {q:'How do I change bowler?',a:'At the end of each over (or pair in Charlie mode), a modal pops up to select the next bowler(s). You can also tap <strong>Change Bowler</strong> on the bowler card anytime.'},
+  ]},
+  {cat:'Teams & Players',icon:'👥',items:[
+    {q:'How do I create a team?',a:'Home → <strong>Teams & Players</strong> → <strong>+ ADD</strong>. Enter a team name and player names. You can also pick players from your master squads using the search/filter.'},
+    {q:'How do I nominate a captain and keeper?',a:'In the squad setup (step 1 or 2 of match creation), each player has a <strong>C</strong> button (captain) and a <strong>🧤</strong> button (keeper). Tap to assign. Only one of each per team. They appear as badges in the scorecard.'},
+    {q:'Can I use the same players in different teams each week?',a:'Yes! Teams are created per match day. Use the master squad as a pool, and pick different players each week. The app prevents picking a player who\'s already in a concurrent match.'},
+  ]},
+  {cat:'Master Squads',icon:'🏅',items:[
+    {q:'What are master squads?',a:'A master squad is a pool of players grouped by <strong>Region</strong> and <strong>Training Group</strong> (e.g. Hampshire → U11 Development). You create game-day teams by picking players from these squads.'},
+    {q:'How do I tag player skills?',a:'Edit a squad → each player has skill toggle buttons: <strong>🏏 Bat, 🧤 WK, 🌀 Spin, 💨 Seam, ⚡ Pace, ⭐ All-rounder</strong>. These skills appear when picking players and help with team balance.'},
+    {q:'Can I upload players from Excel?',a:'Yes! In Master Squads → <strong>📊 Bulk Upload</strong>. Download the template (.xlsx), fill in Region, Training Group, Player Name, and skill columns (mark Y for each skill), then upload. You can merge with existing squads or replace them.'},
+    {q:'What do Public, Private, and Shared visibility mean?',a:'<strong>🌐 Public</strong>: all coaches see the squad. <strong>🔒 Private</strong>: only you and admins see it. <strong>👥 Shared</strong>: only coaches you select can see it. Default for new squads is Private.'},
+    {q:'What is the team balance indicator?',a:'When editing a team, you\'ll see a <strong>Team Balance</strong> card showing counts of each skill. Warnings appear if you have no WK, too many WKs, or no bowlers — helping you build a balanced side.'},
+  ]},
+  {cat:'Scheduling',icon:'📅',items:[
+    {q:'How do I schedule a match?',a:'In the new match setup, tap <strong>📅 Save as Scheduled</strong> at any step. You can schedule with just team names and add players later. Set a date/time and venue too.'},
+    {q:'How does another coach start a scheduled match?',a:'Home → <strong>Scheduled Matches</strong>. Any coach can see the scheduled match, tap <strong>✎ Edit</strong> to add players, then <strong>▶ Start Scoring</strong> when ready.'},
+    {q:'Can I schedule a whole season of matches?',a:'Yes! Create all your matches with dates and venues. They\'ll appear sorted by date. Then assign them to a Season (under 🏆 Seasons) for leaderboards.'},
+  ]},
+  {cat:'Scoring Lock',icon:'🔒',items:[
+    {q:'What is the scoring lock?',a:'When you start scoring a match, it\'s locked to you. Other coaches see it as <strong>🔒 Locked by [Name]</strong> and can only view, not score. This prevents two people scoring simultaneously.'},
+    {q:'How do I transfer scoring to another coach?',a:'Tap the <strong>🔄</strong> button in the scoring topbar → select the coach from the list → confirm. They\'ll now have scoring rights; you become view-only.'},
+    {q:'Can an admin override the lock?',a:'Yes. Admins see a <strong>Take Lock</strong> button on the lock banner.'},
+  ]},
+  {cat:'Player Performance',icon:'📈',items:[
+    {q:'Where can I see player stats?',a:'Home → <strong>Player Performance</strong>. Lists all players with career batting, bowling, and fielding stats aggregated across all completed matches.'},
+    {q:'How does player comparison work?',a:'Player Performance → <strong>⚖️ Compare</strong>. Pick two players from dropdowns — see side-by-side bars for runs, average, SR, wickets, economy, catches, run outs.'},
+    {q:'What are coaching goals?',a:'Player Performance → <strong>🎯 Goals</strong>. Set targets like "Score 25 runs" or "Take 3 wickets". Progress bars track actual vs target from match data. Green when achieved.'},
+    {q:'What is Best XI?',a:'Player Performance → <strong>⭐ Best XI</strong>. Auto-generates a balanced team of 11 from all players based on recent form and skills — ensures WK, bowler mix.'},
+    {q:'How do player notes work?',a:'During scoring, tap <strong>📝</strong> on a batter card to add a note. Categories: 👏 Appreciation, 📈 Improvement, 🎯 Technique, 💪 Attitude, 📝 General. Notes consolidate in Player Performance and export in CSV. Not visible to viewers/parents.'},
+    {q:'How do dismissal breakdowns help?',a:'In Player Detail, the <strong>How Out</strong> section shows how many times a player was Bowled, Caught, LBW, etc. with percentages. When patterns emerge (e.g. 40% caught), coaching tips auto-appear.'},
+  ]},
+  {cat:'Seasons & Awards',icon:'🏆',items:[
+    {q:'How do I create a season?',a:'Home → <strong>Seasons</strong> → <strong>+ New</strong>. Name it (e.g. "Summer 2026 U11"). Then add completed matches to the season to build leaderboards.'},
+    {q:'What leaderboards are available?',a:'<strong>Top Run Scorers</strong>, <strong>Top Wicket Takers</strong>, <strong>Best Batting Average</strong>, and <strong>Top Catchers</strong>. Gold/silver indicators for top 3.'},
+    {q:'How do I award Player of the Match?',a:'On the result screen after a match, scroll to <strong>🏅 Player of the Match</strong> and tap any player. Their name appears with a gold badge and is included in the match report.'},
+  ]},
+  {cat:'Sharing & Export',icon:'📤',items:[
+    {q:'How do parents watch live?',a:'During scoring, tap <strong>📡</strong> in the topbar. A QR code appears — parents scan it to open a read-only live scorecard. It auto-updates as you score. No login needed (uses anonymous auth).'},
+    {q:'How do I share a match report?',a:'After the match (result screen), tap <strong>📋 Copy Report</strong> or <strong>📤 Share Report</strong>. Auto-generates a narrative with result, top performers, POTM. Paste into WhatsApp or email.'},
+    {q:'How do I export as image?',a:'Result screen → <strong>📤 Share Summary</strong>. Generates a clean PNG scorecard image. On mobile, opens the native share sheet (WhatsApp, save to photos). On desktop, downloads the PNG.'},
+    {q:'How do I export to CSV?',a:'Tap <strong>📥</strong> on the scoring screen or result screen. Downloads a full CSV with batting, bowling, ball-by-ball, and player notes. Open in Excel for analysis.'},
+  ]},
+  {cat:'Settings & Admin',icon:'⚙️',items:[
+    {q:'Where are device settings?',a:'Tap <strong>⚙️</strong> on the home screen. Configure cloud sync (frequency, triggers), device name, and access the Admin panel.'},
+    {q:'How does cloud sync work?',a:'Matches sync to Firebase Firestore at configurable intervals — every over (default), every 2 or 5 overs, or manual only. Also syncs on wicket and innings end. Works offline; queues writes.'},
+    {q:'Where is the admin panel?',a:'Settings → <strong>🛡️ Admin → User Management & Usage Report</strong>. See all registered users, change roles, view platform stats, and who\'s currently scoring.'},
+    {q:'How do I push squads to cloud?',a:'Master Squads → <strong>⬆ Push to Cloud</strong>. Uploads all local squads to Firestore so other coaches can see them.'},
+    {q:'What does the version number mean?',a:'Scroll to the bottom of Settings. <strong>PITCHUP v2.1.0 · SCHEMA 1</strong> shows the app version and data schema. If you see an "Update Now" banner, a newer version is available.'},
+  ]},
+];
+
+function renderHelp(){
+  const searchLower=(helpSearch||'').toLowerCase();
+  const filtered=searchLower?HELP_GUIDE.map(cat=>{
+    const items=cat.items.filter(i=>i.q.toLowerCase().includes(searchLower)||i.a.toLowerCase().includes(searchLower));
+    return items.length>0?{...cat,items}:null;
+  }).filter(Boolean):HELP_GUIDE;
+  const totalQ=HELP_GUIDE.reduce((s,c)=>s+c.items.length,0);
+
+  return `<div class="screen light active">
+    <div class="topbar light">
+      <button class="topbar-back" onclick="state.screen='home';render()" style="color:#64748b;">←</button>
+      <span class="topbar-title" style="color:#0f172a;">❓ Help Guide</span>
+      <div style="width:40px;"></div>
+    </div>
+    <div class="screen-inner light">
+      <div style="text-align:center;margin-bottom:14px;">
+        <div style="font-family:var(--fd);font-size:18px;font-weight:700;color:var(--home-text);">How can we help?</div>
+        <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);">${totalQ} guides across ${HELP_GUIDE.length} categories</div>
+      </div>
+      <input type="search" placeholder="🔍 Search help topics..." value="${escHtml(helpSearch||'')}"
+        oninput="helpSearch=this.value;render()"
+        style="width:100%;padding:11px 14px;border:1.5px solid var(--home-border);border-radius:11px;font-size:14px;font-family:var(--fb);color:var(--home-text);background:#fff;margin-bottom:14px;"/>
+
+      ${filtered.length===0?'<div style="text-align:center;padding:30px;color:var(--home-muted);font-size:13px;font-family:var(--fu);">No results for "'+escHtml(helpSearch)+'"</div>':''}
+
+      ${filtered.map(cat=>`
+        <div style="margin-bottom:16px;">
+          <div style="font-family:var(--fu);font-size:12px;font-weight:700;letter-spacing:1.5px;color:var(--home-text);text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+            <span style="font-size:16px;">${cat.icon}</span>${escHtml(cat.cat)}
+            <span style="font-size:10px;color:var(--home-muted);font-weight:400;">(${cat.items.length})</span>
+          </div>
+          ${cat.items.map((item,idx)=>{
+            const itemKey=cat.cat+'_'+idx;
+            const isOpen=helpOpenSection===itemKey||!!searchLower;
+            return `<div style="background:#fff;border:1px solid var(--home-border);border-radius:10px;margin-bottom:6px;overflow:hidden;">
+              <button onclick="helpOpenSection=helpOpenSection==='${itemKey}'?null:'${itemKey}';render()" style="width:100%;text-align:left;padding:10px 12px;background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                <span style="font-size:12px;color:${isOpen?'var(--grass)':'var(--home-muted)'};flex-shrink:0;">${isOpen?'▼':'▶'}</span>
+                <span style="font-family:var(--fu);font-size:13px;font-weight:600;color:var(--home-text);flex:1;">${item.q}</span>
+              </button>
+              ${isOpen?`<div style="padding:0 12px 12px 32px;font-size:12px;color:#475569;font-family:var(--fb);line-height:1.6;">${item.a}</div>`:''}
+            </div>`;
+          }).join('')}
+        </div>`).join('')}
+
+      <div style="text-align:center;margin-top:20px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;">
+        <div style="font-family:var(--fu);font-size:12px;font-weight:700;color:#2563eb;">Need more help?</div>
+        <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:4px;">Contact your club admin or email<br><strong>vijay.iyer@thinkviz.com</strong></div>
+      </div>
+
+      <div style="text-align:center;margin-top:12px;font-size:9px;color:var(--home-muted);font-family:var(--fu);">PITCHUP v${APP_VERSION} · ${HELP_GUIDE.reduce((s,c)=>s+c.items.length,0)} help articles</div>
+    </div>
+  </div>`;
+}
 
 // ─── VIEWER MODE — read-only live scoreboard ────────────────────────────────
 function renderViewer(){
