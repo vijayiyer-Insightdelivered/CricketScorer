@@ -1002,7 +1002,8 @@ function loadFromFirestore(){
     persist();render();
   }).catch(()=>{});
   // Load saved matches from Firestore (merge with local)
-  db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(20).get().then(snap=>{
+  // Force server fetch for completed matches (bypass stale cache)
+  db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(20).get({source:'server'}).then(snap=>{
     const fbMatches=[];
     snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbMatches.push(d);});
     const merged=[...state.savedMatches];
@@ -1014,14 +1015,36 @@ function loadFromFirestore(){
     });
     state.savedMatches=merged.slice(0,20);
     persist();render();
-  }).catch(()=>{});
+  }).catch(e=>{
+    console.warn('Completed matches server fetch failed, trying cache:',e.message);
+    // Fallback to cache if offline
+    db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(20).get().then(snap=>{
+      const fbMatches=[];
+      snap.forEach(doc=>{const d=doc.data();fbMatches.push(d);});
+      const merged=[...state.savedMatches];
+      fbMatches.forEach(fm=>{
+        if(!fm.matchId)return;
+        const idx=merged.findIndex(m=>m.matchId===fm.matchId);
+        if(idx>=0)merged[idx]={...merged[idx],...fm};
+        else merged.push(fm);
+      });
+      state.savedMatches=merged.slice(0,20);
+      persist();render();
+    }).catch(()=>{});
+  });
   // Load in-progress (active) matches from Firestore
-  db.collection('matches').where('complete','==',false).limit(20).get().then(snap=>{
+  db.collection('matches').where('complete','==',false).limit(20).get({source:'server'}).then(snap=>{
     const fbActive=[];
     snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbActive.push(d);});
     state.activeMatches=fbActive;
     render();
-  }).catch(()=>{});
+  }).catch(e=>{
+    console.warn('Active matches server fetch failed, trying cache:',e.message);
+    db.collection('matches').where('complete','==',false).limit(20).get().then(snap=>{
+      const fbActive=[];snap.forEach(doc=>fbActive.push(doc.data()));
+      state.activeMatches=fbActive;render();
+    }).catch(()=>{});
+  });
   // Load squads once (not live listener — saves battery)
   if(_squadsUnsub){_squadsUnsub();_squadsUnsub=null;}
   db.collection('squads').get().then(snap=>{
