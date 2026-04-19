@@ -1779,6 +1779,31 @@ function skipBowlerPick(slot){
 }
 window.skipBowlerPick=skipBowlerPick;
 
+function recoverAndSelectBowler(name){
+  // Clear retired flag so they appear as available, then select them
+  updateInn(inn=>{
+    const b=inn.bowlers.find(x=>x.name===name);
+    if(b){b.retiredInjured=false;b.retireReason='';}
+    return inn;
+  });
+  toast(name+' recovered','success');
+  // Now select them via the existing nextBowler flow
+  selectNextBowler(nextBowlerSelection.slot0?1:0,name);
+}
+window.recoverAndSelectBowler=recoverAndSelectBowler;
+
+function recoverBowler(name,slot){
+  updateInn(inn=>{
+    const b=inn.bowlers.find(x=>x.name===name);
+    if(b){b.retiredInjured=false;b.retireReason='';}
+    if(b)inn.charlieBowlers[slot]=b.id;
+    return inn;
+  });
+  toast(name+' recovered and bowling','success');
+  closeModal();
+}
+window.recoverBowler=recoverBowler;
+
 function applyReplaceBowler(name,slot){
   updateInn(inn=>{
     let nb=inn.bowlers.find(b=>b.name===name);
@@ -3431,7 +3456,9 @@ function renderReplaceBowlerModal(data){
     if(!ex)return true;
     return !ex.retiredInjured&&!activeBIds.includes(ex.id);
   });
-  let items=avail.length===0?`<p style="color:var(--home-muted);font-size:13px;margin-bottom:14px;">No bowlers available.</p>`:
+  // Injured/retired bowlers who could come back
+  const injured=inn.bowlers.filter(b=>b.retiredInjured&&!activeBIds.includes(b.id));
+  let items=avail.length===0&&injured.length===0?`<p style="color:var(--home-muted);font-size:13px;margin-bottom:14px;">No bowlers available.</p>`:
     `<div class="modal-list">${avail.map(name=>{
       const ex=inn.bowlers.find(b=>b.name===name);
       return `<div class="mitem" onclick="applyReplaceBowler('${escHtml(name)}',${data.slot})">
@@ -3439,11 +3466,22 @@ function renderReplaceBowlerModal(data){
         <span class="mitem-meta">${ex?`${overStr(ex.balls,bpo)} · ${ex.runs}r`:'Fresh'}</span>
       </div>`;
     }).join('')}</div>`;
+  const injuredHtml=injured.length>0?`
+    <div style="font-size:11px;color:#fb923c;font-family:var(--fu);font-weight:700;letter-spacing:1px;margin:10px 0 6px;text-transform:uppercase;">Recovered (can bowl again)</div>
+    <div class="modal-list">${injured.map(b=>{
+      const safeName=b.name.replace(/'/g,"\\'");
+      return `<div class="mitem" style="border-color:#fed7aa;" onclick="recoverBowler('${safeName}',${data.slot})">
+        <span class="mitem-name">${escHtml(b.name)}</span>
+        <span class="mitem-meta" style="color:#fb923c;">${overStr(b.balls,bpo)} · ${b.runs}r · was: ${escHtml(b.retireReason||'retired')}</span>
+      </div>`;
+    }).join('')}</div>`:'';
+
   return `<div class="modal-sheet">
     <div class="modal-handle"></div>
     <div class="modal-title">🔄 Replacement Bowler</div>
     <div class="modal-sub">Who takes the ${data.slot===0?'active':'waiting'} bowling slot?</div>
     ${items}
+    ${injuredHtml}
     <button class="modal-cancel" style="margin-bottom:6px;" onclick="skipBowlerPick(${data.slot})">⏭ Pick Later</button>
     <button class="modal-cancel" onclick="closeModal()">Cancel</button>
   </div>`;
@@ -3794,7 +3832,14 @@ function renderNextBowlerModal(){
       ${sectionHdr('Available Bowlers','var(--gold)')}
       <div class="modal-list">${listItems}${available.length===0?'<div style="color:var(--home-muted);font-size:12px;padding:8px;">No bowlers available</div>':''}</div>
       ${quotaDone.length?`${sectionHdr(`Quota Completed (${maxOv} overs)`,'#f87171')}<div class="modal-list">${quotaDone.map(b=>infoItem(b,'done','#f87171')).join('')}</div>`:''}
-      ${injured.length?`${sectionHdr('Injured','#f87171')}<div class="modal-list">${injured.map(b=>infoItem(b,'injured','#f87171')).join('')}</div>`:''}
+      ${injured.length?`${sectionHdr('Recovered? Tap to bring back','#fb923c')}<div class="modal-list">${injured.map(b=>{
+        const safeName=b.name.replace(/'/g,"\\'");
+        return `<div class="mitem" style="border-color:#fed7aa;cursor:pointer;" onclick="recoverAndSelectBowler('${safeName}')">
+          <span style="color:var(--home-muted);font-size:10px;font-family:var(--fu);width:18px;text-align:right;flex-shrink:0;">${b.num}</span>
+          <span class="mitem-name" style="flex:1;">${escHtml(b.name)}</span>
+          <span class="mitem-meta" style="color:#fb923c;">was: ${escHtml(b.reason||'retired')}</span>
+        </div>`;
+      }).join('')}</div>`:''}
       <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="confirmNextBowler()" ${sel0&&sel1?'':'disabled style="opacity:.4;width:100%;margin-top:10px;"'}>${sel0&&sel1?'Confirm Pair':'Select 2 bowlers'}</button>
       <button class="modal-cancel" onclick="skipNextBowler()">Keep Current</button>`;
   }else{
@@ -3817,7 +3862,14 @@ function renderNextBowlerModal(){
       ${sectionHdr('Available Bowlers','var(--gold)')}
       <div class="modal-list">${listItems}${available.length===0?'<div style="color:var(--home-muted);font-size:12px;padding:8px;">No bowlers available</div>':''}</div>
       ${quotaDone.length?`${sectionHdr(`Quota Completed (${maxOv} overs)`,'#f87171')}<div class="modal-list">${quotaDone.map(b=>infoItem(b,'done','#f87171')).join('')}</div>`:''}
-      ${injured.length?`${sectionHdr('Injured','#f87171')}<div class="modal-list">${injured.map(b=>infoItem(b,'injured','#f87171')).join('')}</div>`:''}
+      ${injured.length?`${sectionHdr('Recovered? Tap to bring back','#fb923c')}<div class="modal-list">${injured.map(b=>{
+        const safeName=b.name.replace(/'/g,"\\'");
+        return `<div class="mitem" style="border-color:#fed7aa;cursor:pointer;" onclick="recoverAndSelectBowler('${safeName}')">
+          <span style="color:var(--home-muted);font-size:10px;font-family:var(--fu);width:18px;text-align:right;flex-shrink:0;">${b.num}</span>
+          <span class="mitem-name" style="flex:1;">${escHtml(b.name)}</span>
+          <span class="mitem-meta" style="color:#fb923c;">was: ${escHtml(b.reason||'retired')}</span>
+        </div>`;
+      }).join('')}</div>`:''}
       <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="confirmNextBowler()" ${sel0?'':'disabled style="opacity:.4;width:100%;margin-top:10px;"'}>${sel0?'Confirm':'Select a bowler'}</button>
       <button class="modal-cancel" onclick="skipNextBowler()">Keep Current</button>`;
   }
