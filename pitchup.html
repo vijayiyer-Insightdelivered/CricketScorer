@@ -1924,6 +1924,7 @@ function render(){
   else if(s==='sync_settings')html=renderSyncSettings();
   else if(s==='admin_users')html=renderAdminUsers();
   else if(s==='help')html=renderHelp();
+  else if(s==='match_history')html=renderMatchHistory();
   else if(s==='seasons')html=renderSeasons();
   else if(s==='season_detail')html=renderSeasonDetail();
   else if(s==='player_compare')html=renderPlayerCompare();
@@ -2015,18 +2016,21 @@ function renderHome(){
   let histHtml='';
   if(matches.length>0){
     histHtml=`<div class="home-sec">
-      <div class="home-sec-title">Recent Matches</div>
-      ${matches.slice(0,5).map((m,i)=>{
+      <div class="home-sec-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Recent Matches</span>
+        <button onclick="state.screen='match_history';render()" style="background:none;border:none;color:var(--grass2);font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;cursor:pointer;letter-spacing:1px;">VIEW ALL (${matches.length}) →</button>
+      </div>
+      ${matches.slice(0,3).map((m,i)=>{
         const r=m.rules||DEFAULT_RULES;
         const d=new Date(m.date||0).toLocaleDateString('en-GB');
-        return `<div class="match-card">
+        const i1=m.innings?.[0],i2=m.innings?.[1];
+        const s1=i1?.total||0,s2=i2?.total||0;
+        const winner=s1>s2?m.teamA:s2>s1?m.teamB:null;
+        return `<div class="match-card" style="cursor:pointer;" onclick="state.screen='match_history';render()">
           <div style="flex:1;">
             <div class="match-vs">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
-            <div class="match-meta">${m.totalOvers}ov · ${r.ballsPerOver}b/over · ${m.bowlingMode==='standard'?'Standard':'⚡ Charlie'} · ${d}</div>
+            <div class="match-meta">${i1?s1+'/'+i1.wickets:''} vs ${i2?s2+'/'+i2.wickets:''} · ${winner?escHtml(winner)+' won':'Tie'} · ${d}</div>
           </div>
-          ${isAdmin()?`<button class="match-csv" style="background:#fffbeb;border-color:#fde68a;color:#b45309;" onclick="editSavedMatch(${i})">✏️ Edit</button>`:''}
-          <button class="match-csv" onclick="exportCSV(state.savedMatches[${i}])">📥 CSV</button>
-          ${isAdmin()?`<button class="match-csv" style="background:#fef2f2;border-color:#fecaca;color:#dc2626;" onclick="deleteSavedMatch(${i})" title="Delete match (admin only)">🗑</button>`:''}
         </div>`;}).join('')}
     </div>`;
   }
@@ -6075,6 +6079,75 @@ function setPOTM(name){
   render();
 }
 window.setPOTM=setPOTM;
+
+// ─── MATCH HISTORY ──────────────────────────────────────────────────────────
+function renderMatchHistory(){
+  const matches=state.savedMatches;
+  const bpo=6;
+  return `<div class="screen light active">
+    <div class="topbar light">
+      <button class="topbar-back" onclick="state.screen='home';render()" style="color:#64748b;">←</button>
+      <span class="topbar-title" style="color:#0f172a;">Completed Matches</span>
+      <div style="width:40px;"></div>
+    </div>
+    <div class="screen-inner light">
+      <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;margin-bottom:12px;font-weight:600;">${matches.length} match${matches.length!==1?'es':''}</div>
+      ${matches.length===0?`<div class="empty-state"><div class="empty-icon">🏏</div><div class="empty-text">No completed matches yet.<br>Finish a match to see it here.</div></div>`:''}
+      ${matches.map((m,i)=>{
+        const r=m.rules||DEFAULT_RULES;
+        const mbpo=r.ballsPerOver||6;
+        const d=new Date(m.date||0).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+        const i1=m.innings?.[0],i2=m.innings?.[1];
+        const s1=i1?.total||0,s2=i2?.total||0;
+        const winner=s1>s2?m.teamA:s2>s1?m.teamB:null;
+        const margin=winner===m.teamA?'by '+(s1-s2)+' runs':winner===m.teamB?'by '+((m.playersB?.length||11)-1-(i2?.wickets||0))+' wickets':'';
+        // Top scorer
+        let topBat=null;
+        (m.innings||[]).forEach(inn=>{
+          if(!inn)return;
+          inn.batters.forEach(b=>{if(b.balls>0&&(!topBat||b.runs>topBat.runs))topBat=b;});
+        });
+        // Top bowler
+        let topBowl=null;
+        (m.innings||[]).forEach(inn=>{
+          if(!inn)return;
+          inn.bowlers.forEach(b=>{if(b.balls>0&&(!topBowl||b.wickets>topBowl.wickets||(b.wickets===topBowl.wickets&&b.runs<topBowl.runs)))topBowl=b;});
+        });
+        return `<div style="background:#fff;border:1.5px solid var(--home-border);border-radius:12px;padding:12px;margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+            <div>
+              <div style="font-family:var(--fd);font-size:15px;font-weight:700;color:var(--home-text);">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
+              <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${d}${m.venue?' · '+escHtml(m.venue):''} · ${m.totalOvers}ov · ${m.bowlingMode==='charlie'?'⚡ Charlie':'Standard'}</div>
+            </div>
+            ${m.potm?`<div style="font-size:9px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:2px 6px;color:#b45309;font-family:var(--fu);font-weight:700;">🏅 ${escHtml(m.potm)}</div>`:''}
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <div style="flex:1;background:${winner===m.teamA?'#f0fdf4':'#f8fafc'};border:1px solid ${winner===m.teamA?'#bbf7d0':'var(--home-border)'};border-radius:8px;padding:6px 10px;text-align:center;">
+              <div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);font-weight:700;">${escHtml(m.teamA)}</div>
+              <div style="font-family:var(--fd);font-size:18px;font-weight:700;color:var(--home-text);">${i1?s1+'/'+i1.wickets:'—'}</div>
+              <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${i1?overStr(i1.legalBalls,mbpo)+' ov':''}</div>
+            </div>
+            <div style="flex:1;background:${winner===m.teamB?'#f0fdf4':'#f8fafc'};border:1px solid ${winner===m.teamB?'#bbf7d0':'var(--home-border)'};border-radius:8px;padding:6px 10px;text-align:center;">
+              <div style="font-size:9px;color:var(--home-muted);font-family:var(--fu);font-weight:700;">${escHtml(m.teamB)}</div>
+              <div style="font-family:var(--fd);font-size:18px;font-weight:700;color:var(--home-text);">${i2?s2+'/'+i2.wickets:'—'}</div>
+              <div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${i2?overStr(i2.legalBalls,mbpo)+' ov':''}</div>
+            </div>
+          </div>
+          <div style="font-family:var(--fu);font-size:12px;font-weight:700;color:${winner?'var(--grass)':'#b45309'};margin-bottom:6px;">${winner?'🏆 '+escHtml(winner)+' won '+margin:'🤝 Match Tied'}</div>
+          ${topBat||topBowl?`<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:10px;font-family:var(--fu);color:var(--home-muted);">
+            ${topBat?`<span>🏏 ${escHtml(topBat.name)} ${topBat.runs}(${topBat.balls})</span>`:''}
+            ${topBowl?`<span>🎳 ${escHtml(topBowl.name)} ${topBowl.wickets}/${topBowl.runs}</span>`:''}
+          </div>`:''}
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            ${isAdmin()?`<button onclick="editSavedMatch(${i})" style="flex:1;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;color:#b45309;padding:6px;cursor:pointer;font-family:var(--fu);font-size:10px;font-weight:700;">✏️ Edit</button>`:''}
+            <button onclick="exportCSV(state.savedMatches[${i}])" style="flex:1;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;color:#2563eb;padding:6px;cursor:pointer;font-family:var(--fu);font-size:10px;font-weight:700;">📥 CSV</button>
+            ${isAdmin()?`<button onclick="deleteSavedMatch(${i})" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#dc2626;padding:6px 10px;cursor:pointer;font-family:var(--fu);font-size:10px;font-weight:700;">🗑</button>`:''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
 
 // ─── INTERACTIVE HELP GUIDE ──────────────────────────────────────────────────
 let helpSearch='';
