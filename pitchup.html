@@ -864,6 +864,8 @@ function syncMatchToFirestore(force){
     tossWinner:m.tossWinner,tossChoice:m.tossChoice,batting1st:m.batting1st,
     rules:m.rules,
     playersA:m.playersA,playersB:m.playersB,
+    captainA:m.captainA||null,captainB:m.captainB||null,
+    keeperA:m.keeperA||null,keeperB:m.keeperB||null,
     innings:m.innings.map(inn=>inn?{
       total:inn.total,wickets:inn.wickets,legalBalls:inn.legalBalls,overs:inn.overs,
       complete:inn.complete,extras:{...inn.extras},
@@ -921,6 +923,8 @@ function syncMatchDocToFirestore(m){
     tossWinner:m.tossWinner,tossChoice:m.tossChoice,batting1st:m.batting1st,
     rules:m.rules,
     playersA:m.playersA,playersB:m.playersB,
+    captainA:m.captainA||null,captainB:m.captainB||null,
+    keeperA:m.keeperA||null,keeperB:m.keeperB||null,
     innings:m.innings.map(inn=>inn?{
       total:inn.total,wickets:inn.wickets,legalBalls:inn.legalBalls,overs:inn.overs,
       complete:inn.complete,extras:{...inn.extras},
@@ -2093,9 +2097,17 @@ function editScheduledMatch(matchId){
     teamAId:m.teamAId||null,teamBId:m.teamBId||null,
     clubId:m.clubId||null,regionId:m.regionId||null,
     matchDate:m.matchDate||'',venue:m.venue||'',
-    captainA:m.captainA||null,captainB:m.captainB||null,
-    keeperA:m.keeperA||null,keeperB:m.keeperB||null,
+    // Convert captain/keeper names back to player indexes
+    captainA:m.captainA?(m.playersA||[]).findIndex(p=>p===m.captainA):null,
+    captainB:m.captainB?(m.playersB||[]).findIndex(p=>p===m.captainB):null,
+    keeperA:m.keeperA?(m.playersA||[]).findIndex(p=>p===m.keeperA):null,
+    keeperB:m.keeperB?(m.playersB||[]).findIndex(p=>p===m.keeperB):null,
   };
+  // Fix -1 (not found) to null
+  if(setupData.captainA<0)setupData.captainA=null;
+  if(setupData.captainB<0)setupData.captainB=null;
+  if(setupData.keeperA<0)setupData.keeperA=null;
+  if(setupData.keeperB<0)setupData.keeperB=null;
   state.screen='setup';
   render();
 }
