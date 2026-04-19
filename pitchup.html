@@ -1689,6 +1689,9 @@ function startInnings(){
   const m=state.match,idx=state.currentInnings;
   const batP=idx===0?m.playersA:m.playersB;
   const bowlP=idx===0?m.playersB:m.playersA;
+  // Validate: must have at least 2 batters and opener selection must differ
+  if(batP.length<2){toast('Need at least 2 batters','error');return;}
+  if(innSetup.op1===innSetup.op2){toast('Select two different opening batters','error');return;}
   const batters=batP.map((n,i)=>initBatter(n,`bat_${i}`));
   const bowlers=bowlP.map((n,i)=>initBowler(n,`bowl_${i}`));
   const b1=bowlers.find(b=>b.name===bowlP[innSetup.bw1]);
@@ -3144,7 +3147,12 @@ function renderScoring(){
       <!-- LAYER 2: Batter cards -->
       <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px;align-items:stretch;">
         ${inn.currentBatters.map((bId,i)=>{
-          const b=inn.batters.find(x=>x.id===bId);if(!b)return '';
+          const b=bId?inn.batters.find(x=>x.id===bId):null;
+          if(!b)return `<div class="sb-batter" style="flex:1;min-width:110px;cursor:pointer;border:2px dashed #fecaca;background:#fef2f2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px;" onclick="openModal('newbatter',{reason:'vacant'})">
+            <span style="font-size:20px;">🏏</span>
+            <span style="font-family:var(--fu);font-size:12px;font-weight:700;color:#dc2626;">Select Batter</span>
+            <span style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${i===0?'Striker':'Non-striker'} needed</span>
+          </div>`;
           const nr=rules.retirementScore>0&&b.runs>=rules.retirementScore-5;
           const sr=b.balls>0?((b.runs/b.balls)*100).toFixed(0):'-';
           return `<div class="sb-batter ${i===0?'striker':''}" style="flex:1;min-width:110px;cursor:pointer;" onclick="openModal('striker',{})">
