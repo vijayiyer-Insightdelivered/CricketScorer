@@ -1737,6 +1737,22 @@ function updateWFS(k,v){
 window.updateWFS=updateWFS;
 
 // ─── Striker override ─────────────────────────────────────────────────────────
+function adjustTarget(){
+  if(!state.match||state.currentInnings!==1)return;
+  const current=state.match.targetAdjustment||0;
+  promptModal('Adjust target by how many runs?\n\nPositive = increase target (harder to chase)\nNegative = decrease target (easier to chase)\nCurrent adjustment: '+(current>=0?'+':'')+current,String(current),'Adjust Target').then(val=>{
+    if(val===null)return;
+    const adj=parseInt(val);
+    if(isNaN(adj)){toast('Enter a number','error');return;}
+    state.match.targetAdjustment=adj;
+    persist();syncMatchToFirestore(true);
+    const baseTarget=state.match.innings[0]?state.match.innings[0].total+1:0;
+    toast('Target now '+(baseTarget+adj)+(adj!==0?' ('+(adj>0?'+':'')+adj+' adjustment)':''),'success');
+    render();
+  });
+}
+window.adjustTarget=adjustTarget;
+
 function swapStrike(){
   updateInn(inn=>{
     inn.currentBatters=[inn.currentBatters[1],inn.currentBatters[0]];
@@ -3064,7 +3080,8 @@ function renderScoring(){
   const batTeam=state.currentInnings===0?m.teamA:m.teamB;
   const bowlTeam=state.currentInnings===0?m.teamB:m.teamA;
   const inningsOver=isInningsOver();
-  const target=state.currentInnings===1&&m.innings[0]?m.innings[0].total+1:null;
+  const baseTarget=state.currentInnings===1&&m.innings[0]?m.innings[0].total+1:null;
+  const target=baseTarget?baseTarget+(m.targetAdjustment||0):null;
   const runsNeeded=target?target-(inn.total||0):null;
   const ballsLeft=(m.totalOvers*bpo)-inn.legalBalls;
 
@@ -3312,7 +3329,8 @@ function renderScoring(){
             <div class="sb-overs">${overStr(inn.legalBalls,bpo)} overs</div>
           </div>
           <div style="text-align:right;">
-            ${target?`<div class="sb-target-txt">TARGET <strong>${target}</strong></div>`:''}
+            ${target?`<div class="sb-target-txt" style="display:flex;align-items:center;gap:6px;">TARGET <strong>${target}</strong>${m.targetAdjustment?` <span style="font-size:10px;color:var(--home-muted);">(${m.targetAdjustment>0?'+':''}${m.targetAdjustment})</span>`:''}
+              ${!locked?`<button onclick="event.stopPropagation();adjustTarget()" style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#b45309;padding:2px 6px;cursor:pointer;font-size:9px;font-family:var(--fu);font-weight:700;">±</button>`:''}</div>`:''}
             ${runsNeeded!==null?`<div class="sb-target-txt" style="font-size:11px;">Need ${runsNeeded} off ${ballsLeft}</div>`:''}
             <div style="color:var(--home-muted);font-size:10px;margin-top:6px;font-family:'Rajdhani',sans-serif;letter-spacing:1px;">${m.totalOvers}ov · ${bpo}b/ov</div>
             ${charlie?`<div style="color:var(--gold);font-size:10px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;margin-top:3px;">⚡ CHARLIE MODE</div>`:`<div style="color:var(--grass3);font-size:10px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;margin-top:3px;">🏏 STANDARD</div>`}
@@ -6194,7 +6212,7 @@ function renderViewer(){
   const charlie=(m.bowlingMode||'charlie')==='charlie';
   const batTeam=innIdx===0?m.teamA:m.teamB;
   const bowlTeam=innIdx===0?m.teamB:m.teamA;
-  const target=innIdx===1&&m.innings[0]?m.innings[0].total+1:null;
+  const target=innIdx===1&&m.innings[0]?(m.innings[0].total+1+(m.targetAdjustment||0)):null;
   const runsNeeded=target&&inn?target-(inn.total||0):null;
   const ballsLeft=inn?(m.totalOvers*bpo)-inn.legalBalls:0;
   const matchComplete=m.complete;
