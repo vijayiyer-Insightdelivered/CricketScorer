@@ -1020,13 +1020,11 @@ function loadFromFirestore(){
     state.activeMatches=fbActive;
     render();
   }).catch(()=>{});
-  // Load squads via live listener (auto-updates when other coaches add/edit)
-  if(_squadsUnsub){_squadsUnsub();}
-  _squadsUnsub=db.collection('squads').onSnapshot(snap=>{
+  // Load squads once (not live listener — saves battery)
+  if(_squadsUnsub){_squadsUnsub();_squadsUnsub=null;}
+  db.collection('squads').get().then(snap=>{
     const fbSquads=[];
     snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbSquads.push(d);});
-    console.log('Squads loaded from Firestore:',fbSquads.length);
-    // Merge: Firestore is source of truth for synced squads
     const merged=[...state.squads];
     fbSquads.forEach(fs=>{
       const idx=merged.findIndex(s=>s.id===fs.id);
@@ -1035,9 +1033,7 @@ function loadFromFirestore(){
     });
     state.squads=merged;
     persist();render();
-  },err=>{
-    console.error('Squad listener error:',err.message);
-  });
+  }).catch(()=>{});
 }
 
 let _squadsUnsub=null;
@@ -1891,7 +1887,17 @@ window.selectReturningOutBatter=selectReturningOutBatter;
 let showScorecard=false;
 window.toggleScorecard=()=>{showScorecard=!showScorecard;render();};
 
+let _renderPending=false;
+let _lastRenderTime=0;
 function render(){
+  // Throttle renders to max 1 per 50ms (prevents rapid Firestore callback storms)
+  const now=Date.now();
+  if(now-_lastRenderTime<50&&!_renderPending){
+    _renderPending=true;
+    setTimeout(()=>{_renderPending=false;render();},50);
+    return;
+  }
+  _lastRenderTime=now;_renderPending=false;
   const s=state.screen;
   let html='';
   if(viewerMode){
@@ -5493,12 +5499,24 @@ function updateSyncBar(){
 }
 window.addEventListener('online',()=>{updateOffline();syncMatchToFirestore(true);});
 window.addEventListener('offline',updateOffline);
-// Sync when app goes to background (user switches tab/locks phone)
+// Sync when app goes to background + pause listeners to save battery
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='hidden'&&state.match&&!state.match.complete&&syncConfig.syncOnBackground){
-    syncMatchToFirestore(true);
+  if(document.visibilityState==='hidden'){
+    // Sync before going to background
+    if(state.match&&!state.match.complete&&syncConfig.syncOnBackground){
+      syncMatchToFirestore(true);
+    }
+    // Pause viewer listener when in background
+    if(_viewerUnsub){_viewerUnsubPaused=_viewerUnsub;_viewerUnsub();_viewerUnsub=null;}
+  }else{
+    // Resume viewer listener when coming back
+    if(_viewerUnsubPaused&&viewerMode&&viewerMatchId){
+      startViewerListener();
+      _viewerUnsubPaused=null;
+    }
   }
 });
+let _viewerUnsubPaused=null;
 
 // Register the service worker + detect updates
 let _newSwWaiting=null;
@@ -5506,8 +5524,8 @@ function registerServiceWorker(){
   if(!('serviceWorker' in navigator))return;
   // Try loading a real sw.js file; fall back silently if not found
   navigator.serviceWorker.register('/sw.js',{scope:'/'}).then(reg=>{
-    // Check for updates every 30 min
-    setInterval(()=>{reg.update().catch(()=>{});},30*60*1000);
+    // Check for updates every 2 hours (saves battery)
+    setInterval(()=>{reg.update().catch(()=>{});},2*60*60*1000);
     // Listen for new SW waiting
     reg.addEventListener('updatefound',()=>{
       const nw=reg.installing;
