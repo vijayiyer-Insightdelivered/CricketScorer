@@ -1697,7 +1697,7 @@ function startInnings(){
   const op1=batters.find(b=>b.name===batP[innSetup.op1]);
   const op2=batters.find(b=>b.name===batP[innSetup.op2]);
   const inn={total:0,wickets:0,legalBalls:0,overs:0,batters,bowlers,
-    currentBatters:[op1?.id,op2?.id],charlieBowlers:[b1?.id,b2?.id],
+    currentBatters:[op1?.id,op2?.id],charlieBowlers:[b1?.id,charlie?b2?.id:null],
     extras:{total:0,wides:0,noBalls:0,byes:0,legByes:0},deliveries:[],complete:false};
   const innings=[...(m.innings||[])];innings[idx]=inn;
   // Take/refresh scoring lock when innings starts
@@ -3982,7 +3982,7 @@ function confirmNextBowler(){
         bw=initBowler(nextBowlerSelection.slot0,`bowl_${idx>=0?idx:inn.bowlers.length}`);
         inn.bowlers.push(bw);
       }
-      inn.charlieBowlers=[bw.id,inn.charlieBowlers[1]];
+      inn.charlieBowlers=[bw.id,null]; // Standard mode: only one bowler, no waiting slot
       return inn;
     });
   }
