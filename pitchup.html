@@ -1490,6 +1490,7 @@ function initSetup(teamAId,teamBId){
     playersB:tB?tB.players.map(p=>p.name):Array(8).fill('').map((_,i)=>`Player ${i+1}`),
     teamAId:teamAId||null,teamBId:teamBId||null,
     matchDate:'',venue:'',
+    captainA:null,captainB:null,keeperA:null,keeperB:null,
   };
 }
 window.initSetup=initSetup;
@@ -1614,6 +1615,10 @@ function handleSquadNext(){
     playersA:d.playersA.slice(0,d.sizeA).filter(p=>p&&p.trim()),
     playersB:d.playersB.slice(0,d.sizeB).filter(p=>p&&p.trim()),
     matchDate:d.matchDate||'',venue:d.venue||'',
+    captainA:d.captainA!==null&&d.playersA[d.captainA]?d.playersA[d.captainA]:null,
+    captainB:d.captainB!==null&&d.playersB[d.captainB]?d.playersB[d.captainB]:null,
+    keeperA:d.keeperA!==null&&d.playersA[d.keeperA]?d.playersA[d.keeperA]:null,
+    keeperB:d.keeperB!==null&&d.playersB[d.keeperB]?d.playersB[d.keeperB]:null,
     innings:[],
     scoringLockUid:authUser?.uid||null,
     scoringLockEmail:authUser?.email||'',
@@ -1647,6 +1652,10 @@ function saveAsScheduledMatch(){
     clubId:d.clubId||null,regionId:d.regionId||null,
     playersA,playersB,
     matchDate:d.matchDate||'',venue:d.venue||'',
+    captainA:d.captainA!==null&&playersA[d.captainA]?playersA[d.captainA]:existing?.captainA||null,
+    captainB:d.captainB!==null&&playersB[d.captainB]?playersB[d.captainB]:existing?.captainB||null,
+    keeperA:d.keeperA!==null&&playersA[d.keeperA]?playersA[d.keeperA]:existing?.keeperA||null,
+    keeperB:d.keeperB!==null&&playersB[d.keeperB]?playersB[d.keeperB]:existing?.keeperB||null,
     innings:existing?.innings||[],
     scheduled:true,
     complete:false,
@@ -2082,6 +2091,8 @@ function editScheduledMatch(matchId){
     teamAId:m.teamAId||null,teamBId:m.teamBId||null,
     clubId:m.clubId||null,regionId:m.regionId||null,
     matchDate:m.matchDate||'',venue:m.venue||'',
+    captainA:m.captainA||null,captainB:m.captainB||null,
+    keeperA:m.keeperA||null,keeperB:m.keeperB||null,
   };
   state.screen='setup';
   render();
@@ -2599,14 +2610,23 @@ function renderSetup(){
   const size=isA?d.sizeA:d.sizeB;
   const teamName=escHtml(isA?d.teamA:d.teamB);
   const filledCount=players.slice(0,size).filter(p=>p&&p.trim()).length;
+  const side=isA?'A':'B';
+  const captainKey=isA?'captainA':'captainB';
+  const keeperKey=isA?'keeperA':'keeperB';
+  const captainIdx=d[captainKey];
+  const keeperIdx=d[keeperKey];
   let sq='';
   for(let i=0;i<size;i++){
     const hasName=players[i]&&players[i].trim();
-    sq+=`<div class="squad-row" style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">
-      <span style="color:var(--home-muted);font-size:11px;width:20px;text-align:right;font-family:'Rajdhani',sans-serif;">${i+1}</span>
-      <input style="flex:1;background:#fff;border:1px solid var(--home-border);border-radius:9px;color:var(--home-text);padding:9px 12px;font-size:13px;font-family:'Source Sans 3',sans-serif;"
-        value="${escHtml(players[i]||'')}" placeholder="Player ${i+1}" oninput="updateSetupPlayer('${isA?'A':'B'}',${i},this.value)" onchange="updateSetupPlayer('${isA?'A':'B'}',${i},this.value)"/>
-      ${hasName?`<button onclick="clearSetupPlayer('${isA?'A':'B'}',${i})" title="Remove this player" style="background:#fef2f2;border:1px solid #fecaca;border-radius:7px;color:#dc2626;width:30px;height:30px;cursor:pointer;font-size:13px;flex-shrink:0;">✕</button>`:'<span style="width:30px;flex-shrink:0;"></span>'}
+    const isCap=captainIdx===i;
+    const isKpr=keeperIdx===i;
+    sq+=`<div class="squad-row" style="display:flex;align-items:center;gap:4px;margin-bottom:7px;">
+      <span style="color:var(--home-muted);font-size:11px;width:18px;text-align:right;font-family:'Rajdhani',sans-serif;">${i+1}</span>
+      <input style="flex:1;background:${isCap?'#fffbeb':isKpr?'#f5f3ff':'#fff'};border:1px solid ${isCap?'#fde68a':isKpr?'#ddd6fe':'var(--home-border)'};border-radius:9px;color:var(--home-text);padding:9px 10px;font-size:13px;font-family:'Source Sans 3',sans-serif;"
+        value="${escHtml(players[i]||'')}" placeholder="Player ${i+1}" oninput="updateSetupPlayer('${side}',${i},this.value)" onchange="updateSetupPlayer('${side}',${i},this.value)"/>
+      ${hasName?`<button onclick="setSetupCaptain('${side}',${i})" title="${isCap?'Remove captain':'Set as captain'}" style="width:26px;height:26px;border-radius:50%;border:1.5px solid ${isCap?'#d97706':'var(--home-border)'};background:${isCap?'#d97706':'#fff'};color:${isCap?'#fff':'var(--home-muted)'};cursor:pointer;font-size:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--fu);font-weight:700;">${isCap?'©':'C'}</button>`:''}
+      ${hasName?`<button onclick="setSetupKeeper('${side}',${i})" title="${isKpr?'Remove keeper':'Set as keeper'}" style="width:26px;height:26px;border-radius:50%;border:1.5px solid ${isKpr?'#7c3aed':'var(--home-border)'};background:${isKpr?'#7c3aed':'#fff'};color:${isKpr?'#fff':'var(--home-muted)'};cursor:pointer;font-size:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">🧤</button>`:''}
+      ${hasName?`<button onclick="clearSetupPlayer('${side}',${i})" title="Remove" style="background:#fef2f2;border:1px solid #fecaca;border-radius:7px;color:#dc2626;width:26px;height:26px;cursor:pointer;font-size:11px;flex-shrink:0;">✕</button>`:'<span style="width:80px;flex-shrink:0;"></span>'}
     </div>`;
   }
   // Clear-all button row
@@ -2624,6 +2644,10 @@ function renderSetup(){
     <div class="screen-inner">
       <div style="font-size:11px;color:var(--home-muted);margin-bottom:12px;font-family:'Rajdhani',sans-serif;letter-spacing:.5px;">${size} slots · ${filledCount} filled · up to ${size} can bat</div>
       ${sq}
+      ${(captainIdx!==null&&players[captainIdx])||(keeperIdx!==null&&players[keeperIdx])?`<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+        ${captainIdx!==null&&players[captainIdx]?`<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:4px 10px;font-size:11px;font-family:var(--fu);font-weight:700;color:#b45309;">© Captain: ${escHtml(players[captainIdx])}</div>`:''}
+        ${keeperIdx!==null&&players[keeperIdx]?`<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:4px 10px;font-size:11px;font-family:var(--fu);font-weight:700;color:#7c3aed;">🧤 Keeper: ${escHtml(players[keeperIdx])}</div>`:''}
+      </div>`:''}
       ${clearRow}
       ${renderSetupSquadPicker(isA?'A':'B')}
       <div class="nav-row" style="margin-top:14px;">
@@ -2648,6 +2672,20 @@ function clearAllTeamPlayers(){
   });
 }
 window.clearAllTeamPlayers=clearAllTeamPlayers;
+
+function setSetupCaptain(side,idx){
+  const key=side==='A'?'captainA':'captainB';
+  setupData[key]=setupData[key]===idx?null:idx;
+  render();
+}
+window.setSetupCaptain=setSetupCaptain;
+
+function setSetupKeeper(side,idx){
+  const key=side==='A'?'keeperA':'keeperB';
+  setupData[key]=setupData[key]===idx?null:idx;
+  render();
+}
+window.setSetupKeeper=setSetupKeeper;
 
 function clearSetupPlayer(side,idx){
   const arr=side==='A'?setupData.playersA:setupData.playersB;
@@ -2916,19 +2954,26 @@ function renderInningsSetup(){
 function renderScorecard(inn,teamName,bpo){
   if(!inn)return'';
   const crr=inn.legalBalls>0?((inn.total/inn.legalBalls)*bpo).toFixed(2):'0.00';
+  // Get captain/keeper from match if available
+  const m=state.match||viewerMatch||{};
+  const capName=(teamName===m.teamA?m.captainA:m.captainB)||'';
+  const kprName=(teamName===m.teamA?m.keeperA:m.keeperB)||'';
   let br='';
   inn.batters.filter(b=>b.balls>0||inn.currentBatters.includes(b.id)).forEach(b=>{
     const isA=inn.currentBatters.includes(b.id);
     const sr=b.balls>0?((b.runs/b.balls)*100).toFixed(0):'-';
     const nc=isA?'td-active':b.retired?'td-retired':'td-normal';
     const pre=isA?'⚡ ':b.retired?'🏃 ':'';
+    const isCap=capName&&b.name===capName;
+    const isKpr=kprName&&b.name===kprName;
+    const roleBadge=(isCap?'©':'')+(isKpr?' 🧤':'');
     const outsCount=b.outsCount||0;
     const outsLabel=outsCount>1?` · out ×${outsCount}`:'';
     let sub='';
     if(b.retired)sub=`<div class="td-sub">retired not out</div>`;
     else if(b.out)sub=`<div class="td-sub">${escHtml(b.dismissal)}${outsLabel}</div>`;
     else if(outsCount>0)sub=`<div class="td-sub" style="color:#b45309;">back after being out${outsCount>1?' ×'+outsCount:''}</div>`;
-    br+=`<tr><td><span class="${nc}">${pre}${escHtml(b.name)}</span>${sub}</td>
+    br+=`<tr><td><span class="${nc}">${pre}${escHtml(b.name)}${roleBadge?'<span style="font-size:10px;margin-left:3px;">'+roleBadge+'</span>':''}</span>${sub}</td>
       <td class="td-runs">${b.runs}</td><td class="td-stat">${b.balls}</td>
       <td class="td-stat">${b.fours}</td><td class="td-stat">${b.sixes}</td><td class="td-stat">${sr}</td></tr>`;
   });
