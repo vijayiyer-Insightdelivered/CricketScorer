@@ -1316,6 +1316,43 @@ function renderByeRunsModal(data){
   </div>`;
 }
 
+// ─── Scoring Notes Modal (pick any player) ───────────────────────────────────
+function renderScoringNotesModal(){
+  const m=state.match;if(!m)return '';
+  const batTeam=state.currentInnings===0?m.teamA:m.teamB;
+  const bowlTeam=state.currentInnings===0?m.teamB:m.teamA;
+  const batPlayers=state.currentInnings===0?m.playersA:m.playersB;
+  const bowlPlayers=state.currentInnings===0?m.playersB:m.playersA;
+  const notes=m.playerNotes||[];
+
+  function playerBtn(name,role){
+    const noteCount=notes.filter(n=>n.playerName===name).length;
+    const safeName=name.replace(/'/g,"\\'");
+    return `<button onclick="closeModal();addPlayerNote('${safeName}')" style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;font-size:12px;font-family:var(--fu);font-weight:600;cursor:pointer;border:1px solid ${noteCount?'#bbf7d0':'var(--home-border)'};background:${noteCount?'#f0fdf4':'#fff'};color:var(--home-text);text-align:left;width:100%;">
+      <span style="flex:1;">${escHtml(name)}</span>
+      <span style="font-size:9px;color:var(--home-muted);">${role}</span>
+      ${noteCount?`<span style="font-size:9px;color:var(--grass);font-weight:700;">${noteCount} 📝</span>`:''}
+    </button>`;
+  }
+
+  return `<div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📝 Add Note</div>
+    <div class="modal-sub">Select any player — batter, bowler, or fielder</div>
+    <div style="max-height:400px;overflow-y:auto;">
+      <div style="font-size:10px;color:#b45309;font-family:var(--fu);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;">🏏 ${escHtml(batTeam)} (Batting)</div>
+      <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
+        ${(batPlayers||[]).map(n=>playerBtn(n,'bat')).join('')}
+      </div>
+      <div style="font-size:10px;color:#2563eb;font-family:var(--fu);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;">🎳 ${escHtml(bowlTeam)} (Bowling/Fielding)</div>
+      <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
+        ${(bowlPlayers||[]).map(n=>playerBtn(n,'bowl/field')).join('')}
+      </div>
+    </div>
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+  </div>`;
+}
+
 // ─── Undo Last Ball ──────────────────────────────────────────────────────────
 let _undoStack=[]; // stack of innings snapshots (max 6)
 const UNDO_MAX=6;
@@ -3348,6 +3385,7 @@ function renderScoring(){
         <div class="ball-grid">${bvs.map(b=>`<button class="ball-btn ${b.c}" ${inningsOver?'disabled':''} onclick="scoreRuns(${b.v})">${b.v}${b.s?`<span class="badge">${b.s}</span>`:''}</button>`).join('')}</div>
         <div class="extras-grid">${['Wide','No Ball','Bye','Leg Bye'].map(e=>`<button class="extra-btn" ${inningsOver?'disabled':''} onclick="scoreExtra('${e}')"><span class="en">${e.toUpperCase()}</span><span class="es">${extraInfo[e]}</span></button>`).join('')}</div>
         ${wicketSect}
+        <button onclick="openModal('scoringNotes',{})" style="width:100%;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;color:#2563eb;padding:10px;font-size:13px;font-family:var(--fd);font-weight:600;cursor:pointer;letter-spacing:1px;">📝 ADD NOTE FOR ANY PLAYER</button>
       </div>
 
       ${inningsOver?`<button class="end-btn" onclick="endInnings()">${state.currentInnings===0?'END INNINGS → Start 2nd':'🏆 END MATCH'}</button>`:''}
@@ -3443,6 +3481,7 @@ function renderModal(modal){
   else if(modal.type==='share')inner=renderShareModal();
   else if(modal.type==='transferLock')inner=renderTransferLockModal();
   else if(modal.type==='byeRuns')inner=renderByeRunsModal(modal.data);
+  else if(modal.type==='scoringNotes')inner=renderScoringNotesModal();
   else if(modal.type==='bestXI')inner=`<div class="modal-sheet"><div class="modal-handle"></div><div class="modal-title">⭐ Best XI</div><div class="modal-sub">Based on recent form, skills & balance</div><div style="max-height:400px;overflow-y:auto;">${modal.data?.html||''}</div><button class="modal-cancel" onclick="closeModal()">Close</button></div>`;
   else if(modal.type==='matchReport')inner=`<div class="modal-sheet"><div class="modal-handle"></div><div class="modal-title">📋 Match Report</div><div class="modal-sub">Copy and paste into WhatsApp, email, or newsletter</div><textarea style="width:100%;height:200px;padding:10px;border:1px solid var(--home-border);border-radius:9px;font-size:12px;font-family:monospace;color:var(--home-text);resize:vertical;" readonly>${escHtml(modal.data?.text||'')}</textarea><button class="modal-cancel" onclick="closeModal()">Close</button></div>`;
   else if(modal.type==='uploadPreview')inner=renderUploadPreviewModal();
