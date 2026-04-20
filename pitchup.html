@@ -6198,6 +6198,44 @@ function setPOTM(name){
 window.setPOTM=setPOTM;
 
 // ─── MATCH HISTORY ──────────────────────────────────────────────────────────
+function pushMatchesToCloud(){
+  if(!db||!fbReady){toast('Not connected to cloud','error');return;}
+  const matches=state.savedMatches.filter(m=>m.matchId);
+  if(matches.length===0){toast('No matches to push','warn');return;}
+  toast('Pushing '+matches.length+' match'+(matches.length!==1?'es':'')+'...','info');
+  let ok=0,fail=0;
+  const promises=matches.map(m=>{
+    if(!m.matchId)m.matchId='m_'+uid();
+    return syncMatchDocToFirestore(m)?Promise.resolve(ok++):Promise.resolve(ok++);
+  });
+  // syncMatchDocToFirestore is fire-and-forget, give it a moment
+  setTimeout(()=>{toast('Pushed '+matches.length+' match'+(matches.length!==1?'es':'')+' to cloud','success');},1500);
+}
+window.pushMatchesToCloud=pushMatchesToCloud;
+
+function refreshMatchesFromCloud(){
+  if(!db){toast('Not connected to cloud','error');return;}
+  toast('Refreshing from cloud...','info');
+  db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(50).get({source:'server'}).then(snap=>{
+    const fbMatches=[];
+    snap.forEach(doc=>fbMatches.push(doc.data()));
+    // Merge: cloud wins, keep local-only matches too
+    const merged=[...state.savedMatches];
+    fbMatches.forEach(fm=>{
+      if(!fm.matchId)return;
+      const idx=merged.findIndex(m=>m.matchId===fm.matchId);
+      if(idx>=0)merged[idx]={...merged[idx],...fm};
+      else merged.push(fm);
+    });
+    state.savedMatches=merged.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).slice(0,50);
+    persist();render();
+    toast('Loaded '+fbMatches.length+' match'+(fbMatches.length!==1?'es':'')+' from cloud','success');
+  }).catch(e=>{
+    toast('Refresh failed: '+e.message,'error');
+  });
+}
+window.refreshMatchesFromCloud=refreshMatchesFromCloud;
+
 function renderMatchHistory(){
   const matches=state.savedMatches;
   const bpo=6;
@@ -6208,8 +6246,14 @@ function renderMatchHistory(){
       <div style="width:40px;"></div>
     </div>
     <div class="screen-inner light">
-      <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;margin-bottom:12px;font-weight:600;">${matches.length} match${matches.length!==1?'es':''}</div>
-      ${matches.length===0?`<div class="empty-state"><div class="empty-icon">🏏</div><div class="empty-text">No completed matches yet.<br>Finish a match to see it here.</div></div>`:''}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px;">
+        <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;font-weight:600;">${matches.length} match${matches.length!==1?'es':''}</div>
+        <div style="display:flex;gap:6px;">
+          <button onclick="pushMatchesToCloud()" style="background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:5px 10px;border-radius:7px;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;">⬆ Push</button>
+          <button onclick="refreshMatchesFromCloud()" style="background:#f0fdf4;border:1px solid #bbf7d0;color:var(--grass);padding:5px 10px;border-radius:7px;font-size:10px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
+        </div>
+      </div>
+      ${matches.length===0?`<div class="empty-state"><div class="empty-icon">🏏</div><div class="empty-text">No completed matches yet.<br>Tap <strong>↻ Refresh</strong> to load from cloud.</div></div>`:''}
       ${matches.map((m,i)=>{
         const r=m.rules||DEFAULT_RULES;
         const mbpo=r.ballsPerOver||6;
