@@ -4918,9 +4918,69 @@ function adminDeleteUser(uid){
 }
 window.adminDeleteUser=adminDeleteUser;
 
+// ─── Admin: Create Shared Accounts ──────────────────────────────────────────
+let createAccountForm={name:'',email:'',password:'',creating:false};
+
+function adminCreateAccount(){
+  if(!isAdmin()){toast('Admin only','error');return;}
+  const {name,email,password}=createAccountForm;
+  if(!name.trim()){toast('Enter a name','error');return;}
+  if(!email.trim()){toast('Enter an email','error');return;}
+  if(password.length<6){toast('Password must be at least 6 characters','error');return;}
+  createAccountForm.creating=true;render();
+
+  // Use a secondary Firebase app to create the account without signing out the admin
+  let secondaryApp;
+  try{
+    secondaryApp=firebase.app('secondary');
+  }catch(e){
+    secondaryApp=firebase.initializeApp(firebaseConfig,'secondary');
+  }
+  const secondaryAuth=secondaryApp.auth();
+
+  secondaryAuth.createUserWithEmailAndPassword(email.trim(),password).then(cred=>{
+    return cred.user.updateProfile({displayName:name.trim()}).then(()=>{
+      // Save user doc to Firestore with standard role
+      return db.collection('users').doc(cred.user.uid).set({
+        uid:cred.user.uid,
+        email:email.trim(),
+        displayName:name.trim(),
+        role:'standard',
+        createdByAdmin:authUser?.uid||null,
+        createdByAdminName:authUser?.displayName||authUser?.email||'',
+        isSharedAccount:true,
+        schemaVersion:SCHEMA_VERSION,
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }).then(()=>{
+      // Sign out from secondary app (don't affect primary session)
+      return secondaryAuth.signOut();
+    });
+  }).then(()=>{
+    createAccountForm={name:'',email:'',password:'',creating:false};
+    toast('Account created: '+email.trim(),'success');
+    loadAdminUsers(); // refresh user list
+  }).catch(e=>{
+    createAccountForm.creating=false;
+    const msg=e.code==='auth/email-already-in-use'?'Email already registered':
+      e.code==='auth/invalid-email'?'Invalid email format':
+      e.code==='auth/weak-password'?'Password too weak':e.message;
+    toast('Failed: '+msg,'error');
+    render();
+  });
+}
+window.adminCreateAccount=adminCreateAccount;
+
+function generatePassword(){
+  const chars='abcdefghjkmnpqrstuvwxyz23456789';
+  let pwd='';for(let i=0;i<8;i++)pwd+=chars[Math.floor(Math.random()*chars.length)];
+  createAccountForm.password=pwd;render();
+  toast('Password generated — share it with the coach','info');
+}
+window.generatePassword=generatePassword;
+
 function renderAdminUsers(){
   if(!isAdmin()){state.screen='home';return renderHome();}
-  // Auto-load on first visit
   if(adminUsersData.length===0&&!adminUsersLoading)loadAdminUsers();
 
   const totalMatches=state.savedMatches.length+(state.activeMatches||[]).filter(m=>!m.scheduled).length;
@@ -4968,6 +5028,19 @@ function renderAdminUsers(){
           </div>`).join('')}
       </div>`:''}
 
+      <!-- Create shared account -->
+      <div class="team-form-card" style="margin-bottom:14px;">
+        <div class="team-form-title" style="color:#2563eb;">➕ Create Coach Account</div>
+        <div style="font-size:11px;color:var(--home-muted);margin-bottom:10px;font-family:var(--fu);">Create accounts for rolling/guest coaches. Share the login details for them to score matches.</div>
+        <input type="text" placeholder="Coach name" value="${escHtml(createAccountForm.name)}" oninput="createAccountForm.name=this.value" style="width:100%;padding:9px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);background:#fff;margin-bottom:8px;color:var(--home-text);"/>
+        <input type="email" placeholder="Email address" value="${escHtml(createAccountForm.email)}" oninput="createAccountForm.email=this.value" style="width:100%;padding:9px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);background:#fff;margin-bottom:8px;color:var(--home-text);"/>
+        <div style="display:flex;gap:6px;margin-bottom:10px;">
+          <input type="text" placeholder="Password (min 6 chars)" value="${escHtml(createAccountForm.password)}" oninput="createAccountForm.password=this.value" style="flex:1;padding:9px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);background:#fff;color:var(--home-text);"/>
+          <button onclick="generatePassword()" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;color:#2563eb;padding:9px 12px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;flex-shrink:0;">🔑 Generate</button>
+        </div>
+        <button onclick="adminCreateAccount()" style="width:100%;background:${createAccountForm.creating?'#94a3b8':'linear-gradient(135deg,#2563eb,#1d4ed8)'};border:none;border-radius:9px;color:#fff;padding:11px;cursor:pointer;font-family:var(--fu);font-size:13px;font-weight:700;${createAccountForm.creating?'opacity:.6;pointer-events:none;':''}">${createAccountForm.creating?'⌛ Creating...':'Create Account'}</button>
+      </div>
+
       <!-- User list -->
       <div class="team-form-card" style="margin-bottom:14px;">
         <div class="team-form-title">👥 Registered Users (${adminUsersData.length})</div>
@@ -4989,6 +5062,7 @@ function renderAdminUsers(){
                 <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);overflow:hidden;text-overflow:ellipsis;">${escHtml(u.email||'')}</div>
                 <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
                   <span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);font-weight:700;letter-spacing:.5px;${isUserAdmin?'background:#fffbeb;color:#b45309;border:1px solid #fde68a;':'background:#f0fdf4;color:var(--grass);border:1px solid #bbf7d0;'}">${isUserAdmin?'🛡️ ADMIN':'👤 STANDARD'}</span>
+                  ${u.isSharedAccount?`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);font-weight:700;background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe;">🔗 Shared</span>`:''}
                   ${u._matchesScored>0?`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;">${u._matchesScored} matches</span>`:''}
                   ${u._matchesScheduled>0?`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);background:#fffbeb;color:#b45309;border:1px solid #fde68a;">${u._matchesScheduled} scheduled</span>`:''}
                   ${u._notesAdded>0?`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-family:var(--fu);background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe;">📝 ${u._notesAdded} notes</span>`:''}
