@@ -1286,6 +1286,36 @@ function updateInn(fn){
   state.match={...m,innings};
 }
 
+// ─── Bye/Leg Bye Runs Picker ─────────────────────────────────────────────────
+function renderByeRunsModal(data){
+  const type=data?.type||'Bye';
+  const rules=getRules();
+  const isWide=type==='Wide',isNB=type==='No Ball',isBye=type==='Bye',isLB=type==='Leg Bye';
+  const baseRuns=isWide?rules.wideRuns:isNB?rules.noBallRuns:0;
+  const labels={Wide:'Wide',  'No Ball':'No Ball',Bye:'Bye','Leg Bye':'Leg Bye'};
+  const desc=isWide?'Wide delivery — how many additional runs? ('+baseRuns+' penalty already added)':
+    isNB?'No Ball — how many additional runs? ('+baseRuns+' penalty already added)':
+    isBye?'Bye — ball didn\'t touch the bat. How many did they run?':
+    'Leg Bye — ball hit the pads. How many did they run?';
+  return `<div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">${labels[type]} — Runs</div>
+    <div class="modal-sub">${desc}</div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px;">
+      ${[0,1,2,3,4].map(r=>{
+        const total=baseRuns+r;
+        const show=((isWide||isNB)&&r===0);
+        return `<button onclick="closeModal();scoreExtra('${type}',${r})" style="height:56px;border-radius:12px;border:none;cursor:pointer;font-family:var(--fd);font-weight:700;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${r===4?'#d97706':r===0?'#94a3b8':r===1?'var(--grass)':'#3b82f6'};">
+          <span style="font-size:${r===0&&(isWide||isNB)?'16':'22'}px;">${(isWide||isNB)?'+'+r:r}</span>
+          ${(isWide||isNB)?`<span style="font-size:9px;opacity:.8;">${total} total</span>`:''}
+        </button>`;
+      }).join('')}
+    </div>
+    ${(isBye||isLB)?'<div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);text-align:center;margin-bottom:8px;">Odd runs rotate the strike</div>':''}
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+  </div>`;
+}
+
 // ─── Undo Last Ball ──────────────────────────────────────────────────────────
 let _undoStack=[]; // stack of innings snapshots (max 6)
 const UNDO_MAX=6;
@@ -1390,26 +1420,33 @@ function scoreRuns(runs){
 }
 window.scoreRuns=scoreRuns;
 
-function scoreExtra(type){
+function scoreExtra(type,extraRunsOverride){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  // For all extras, if no runs specified, open picker modal
+  if(extraRunsOverride===undefined){
+    openModal('byeRuns',{type});return;
+  }
   pushUndo();
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
     const bw=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
     const isWide=type==='Wide',isNB=type==='No Ball',isBye=type==='Bye',isLB=type==='Leg Bye';
-    const extraRuns=isWide?rules.wideRuns:isNB?rules.noBallRuns:1;
+    // Base penalty + additional runs
+    const baseRuns=isWide?rules.wideRuns:isNB?rules.noBallRuns:0;
+    const totalRuns=baseRuns+extraRunsOverride;
     const isLegal=(isWide&&!rules.wideBowlAgain)||(isNB&&!rules.noBallBowlAgain)||isBye||isLB;
-    inn.total+=extraRuns;inn.extras.total+=extraRuns;
-    if(isWide){inn.extras.wides+=1;if(bw){bw.runs+=extraRuns;bw.wides+=1;}}
-    if(isNB){inn.extras.noBalls+=1;if(bw){bw.runs+=extraRuns;bw.noBalls+=1;}}
-    if(isBye)inn.extras.byes+=1;if(isLB)inn.extras.legByes+=1;
+    inn.total+=totalRuns;inn.extras.total+=totalRuns;
+    if(isWide){inn.extras.wides+=totalRuns;if(bw){bw.runs+=totalRuns;bw.wides+=1;}}
+    if(isNB){inn.extras.noBalls+=totalRuns;if(bw){bw.runs+=totalRuns;bw.noBalls+=1;}}
+    if(isBye)inn.extras.byes+=totalRuns;if(isLB)inn.extras.legByes+=totalRuns;
     if(isLegal){
       inn.legalBalls+=1;if(bw)bw.balls+=1;
       if(inn.legalBalls%bpo===0){inn.overs+=1;inn.currentBatters=[inn.currentBatters[1],inn.currentBatters[0]];}
-      // Charlie: swap on every legal delivery. Standard: no auto-swap.
       if(charlie) inn.charlieBowlers=[inn.charlieBowlers[1],inn.charlieBowlers[0]];
     }
-    inn.deliveries.push({over:inn.overs,ball:inn.legalBalls%bpo,bowler:bw?.name,batter:'Extra',event:type,runs:extraRuns,isExtra:true,extraType:type});
+    // Rotate strike on odd additional runs (batters physically ran)
+    if(extraRunsOverride%2===1)inn.currentBatters=[inn.currentBatters[1],inn.currentBatters[0]];
+    inn.deliveries.push({over:inn.overs,ball:inn.legalBalls%bpo,bowler:bw?.name,batter:'Extra',event:type+(totalRuns>1?' '+totalRuns:''),runs:totalRuns,isExtra:true,extraType:type});
     return inn;
   });
   persist();syncMatchToFirestore(false);
@@ -3129,7 +3166,7 @@ function renderScoring(){
   const waiting=inn.charlieBowlers[1]?inn.bowlers.find(b=>b.id===inn.charlieBowlers[1]):null;
 
   const bvs=[{v:0,c:'b0'},{v:1,c:'b1'},{v:2,c:'b2'},{v:3,c:'b3'},{v:4,c:'b4',s:'FOUR'},{v:6,c:'b6',s:'SIX'}];
-  const extraInfo={'Wide':`+${rules.wideRuns}r${rules.wideBowlAgain?' rebowl':''}`,'No Ball':`+${rules.noBallRuns}r${rules.noBallBowlAgain?' rebowl':''}`,'Bye':'+1 legal','Leg Bye':'+1 legal'};
+  const extraInfo={'Wide':`+${rules.wideRuns}r + runs`,'No Ball':`+${rules.noBallRuns}r + runs`,'Bye':'+ runs','Leg Bye':'+ runs'};
 
   let wicketSect='';
   if(wicketFormVisible){
@@ -3383,6 +3420,7 @@ function renderModal(modal){
   else if(modal.type==='viewnotes')inner=renderViewNotesModal(modal.data);
   else if(modal.type==='share')inner=renderShareModal();
   else if(modal.type==='transferLock')inner=renderTransferLockModal();
+  else if(modal.type==='byeRuns')inner=renderByeRunsModal(modal.data);
   else if(modal.type==='bestXI')inner=`<div class="modal-sheet"><div class="modal-handle"></div><div class="modal-title">⭐ Best XI</div><div class="modal-sub">Based on recent form, skills & balance</div><div style="max-height:400px;overflow-y:auto;">${modal.data?.html||''}</div><button class="modal-cancel" onclick="closeModal()">Close</button></div>`;
   else if(modal.type==='matchReport')inner=`<div class="modal-sheet"><div class="modal-handle"></div><div class="modal-title">📋 Match Report</div><div class="modal-sub">Copy and paste into WhatsApp, email, or newsletter</div><textarea style="width:100%;height:200px;padding:10px;border:1px solid var(--home-border);border-radius:9px;font-size:12px;font-family:monospace;color:var(--home-text);resize:vertical;" readonly>${escHtml(modal.data?.text||'')}</textarea><button class="modal-cancel" onclick="closeModal()">Close</button></div>`;
   else if(modal.type==='uploadPreview')inner=renderUploadPreviewModal();
