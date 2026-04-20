@@ -111,18 +111,19 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 .home-hero-sub{font-size:13px;color:rgba(255,255,255,.7);line-height:1.5;}
 
 /* action cards */
-.home-actions{padding:20px 16px 0;}
-.action-card{border-radius:16px;padding:18px;margin-bottom:12px;cursor:pointer;transition:transform .12s,box-shadow .12s;display:flex;align-items:center;gap:14px;text-decoration:none;}
-.action-card:active{transform:scale(.98);}
-.action-card.primary{background:linear-gradient(135deg,var(--grass),var(--grass2));box-shadow:0 4px 18px rgba(42,145,82,.35);}
+.home-actions{padding:20px 16px 0;display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.action-card{border-radius:14px;padding:14px;cursor:pointer;transition:transform .12s,box-shadow .12s;display:flex;flex-direction:column;gap:8px;text-decoration:none;}
+.action-card:active{transform:scale(.97);}
+.action-card.primary{background:linear-gradient(135deg,var(--grass),var(--grass2));box-shadow:0 4px 18px rgba(42,145,82,.35);grid-column:1/-1;}
 .action-card.secondary{background:#fff;border:1.5px solid var(--home-border);box-shadow:0 2px 8px rgba(0,0,0,.05);}
+.action-card .ac-arrow{display:none;}
 .action-card.warning{background:#fffbeb;border:1.5px solid #fde68a;}
-.ac-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.ac-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
 .ac-icon.green{background:rgba(255,255,255,.2);}
 .ac-icon.white-green{background:rgba(42,145,82,.1);}
 .ac-icon.white-amber{background:#fef3c7;}
-.ac-title{font-family:var(--fd);font-size:17px;font-weight:600;letter-spacing:.5px;}
-.ac-sub{font-size:12px;margin-top:2px;}
+.ac-title{font-family:var(--fd);font-size:14px;font-weight:600;letter-spacing:.5px;}
+.ac-sub{font-size:10px;margin-top:2px;color:var(--home-muted);line-height:1.3;}
 .action-card.primary .ac-title,.action-card.primary .ac-sub{color:#fff;}
 .action-card.primary .ac-sub{opacity:.8;}
 .action-card.secondary .ac-title{color:var(--home-text);}
@@ -2149,7 +2150,7 @@ function renderHome(){
           </div>
           <span class="ac-arrow">›</span>
         </div>
-        ${active.length>0?`<div class="action-card secondary" style="border-left:3px solid #dc2626;" onclick="document.getElementById('active-section')?.scrollIntoView({behavior:'smooth'})">
+        ${active.length>0?`<div class="action-card secondary" style="border-left:3px solid #dc2626;grid-column:1/-1;" onclick="document.getElementById('active-section')?.scrollIntoView({behavior:'smooth'})">
           <div class="ac-icon white-green" style="background:#fef2f2;color:#dc2626;position:relative;">🔴
             <div style="position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#dc2626;animation:pulse 2s infinite;"></div>
           </div>
@@ -2329,46 +2330,72 @@ function refreshScheduledMatches(){
 }
 window.refreshScheduledMatches=refreshScheduledMatches;
 
+function archiveExpiredMatch(matchId){
+  const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
+  if(!m)return;
+  confirmModal('Mark "'+m.teamA+' vs '+m.teamB+'" as not played and move to completed matches?','Archive Match',{okLabel:'Archive'}).then(ok=>{
+    if(!ok)return;
+    // Move to saved matches as a completed (not played) match
+    const archived={...m,scheduled:false,complete:true,notPlayed:true,date:m.matchDate||m.scheduledAt||new Date().toISOString()};
+    state.savedMatches=[archived,...state.savedMatches.slice(0,49)];
+    state.activeMatches=(state.activeMatches||[]).filter(x=>x.matchId!==matchId);
+    persist();
+    if(db){
+      db.collection('matches').doc(matchId).set({scheduled:false,complete:true,notPlayed:true,date:archived.date},{merge:true}).catch(()=>{});
+    }
+    toast('Match archived as not played','success');
+    render();
+  });
+}
+window.archiveExpiredMatch=archiveExpiredMatch;
+
 function renderScheduledMatches(){
-  const scheduled=(state.activeMatches||[]).filter(m=>m.scheduled);
-  // Sort: matches with a date come first (chronological), then matches without a date
-  scheduled.sort((a,b)=>{
+  const allScheduled=(state.activeMatches||[]).filter(m=>m.scheduled);
+  const now=new Date();
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+
+  // Split into upcoming and past
+  const upcoming=[];
+  const past=[];
+  allScheduled.forEach(m=>{
+    if(m.matchDate){
+      const md=new Date(m.matchDate);
+      const matchDay=new Date(md.getFullYear(),md.getMonth(),md.getDate());
+      if(matchDay<today)past.push(m);
+      else upcoming.push(m);
+    }else{
+      upcoming.push(m); // no date = treat as upcoming
+    }
+  });
+
+  // Sort upcoming: soonest first
+  upcoming.sort((a,b)=>{
     if(a.matchDate&&!b.matchDate)return -1;
     if(!a.matchDate&&b.matchDate)return 1;
     if(a.matchDate&&b.matchDate)return new Date(a.matchDate)-new Date(b.matchDate);
     return new Date(b.scheduledAt||0)-new Date(a.scheduledAt||0);
   });
+  // Sort past: most recent first
+  past.sort((a,b)=>new Date(b.matchDate||0)-new Date(a.matchDate||0));
 
-  let content='';
-  if(scheduled.length===0){
-    content=`<div class="empty-state" style="padding:60px 20px;">
-      <div class="empty-icon">📅</div>
-      <div class="empty-text">No scheduled matches yet.<br>Tap <strong>+ Schedule</strong> to plan a match for later.</div>
-    </div>`;
-  }else{
-    content=scheduled.map(m=>{
+  function matchCard(m,expired){
       const r=m.rules||DEFAULT_RULES;
       const aCount=(m.playersA||[]).length;
       const bCount=(m.playersB||[]).length;
       const ready=aCount>=2&&bCount>=2;
-      // Match date — the scheduled date for the game itself
-      let matchDateStr='',isUpcoming=false,isPast=false,isToday=false;
+      let matchDateStr='',isToday=false;
       if(m.matchDate){
         const md=new Date(m.matchDate);
-        const now=new Date();
-        const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
         const matchDay=new Date(md.getFullYear(),md.getMonth(),md.getDate());
         isToday=matchDay.getTime()===today.getTime();
-        isUpcoming=md>now&&!isToday;
-        isPast=md<now&&!isToday;
         matchDateStr=md.toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
       }
-      const borderColor=isToday?'var(--grass)':isPast?'#94a3b8':'#d97706';
+      const borderColor=expired?'#94a3b8':isToday?'var(--grass)':'#d97706';
       return `<div style="background:#fff;border:1.5px solid var(--home-border);border-left:4px solid ${borderColor};border-radius:12px;padding:12px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;">
           <div style="flex:1;">
             <div style="font-family:var(--fd);font-size:16px;font-weight:700;color:var(--home-text);">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
-            ${matchDateStr?`<div style="font-size:12px;color:${isToday?'var(--grass)':isPast?'#94a3b8':'#b45309'};font-family:var(--fu);font-weight:700;margin-top:3px;">📅 ${matchDateStr}${isToday?' · TODAY':''}${isPast?' · past':''}</div>`:''}
+            ${matchDateStr?`<div style="font-size:12px;color:${isToday?'var(--grass)':expired?'#dc2626':'#b45309'};font-family:var(--fu);font-weight:700;margin-top:3px;">📅 ${matchDateStr}${isToday?' · TODAY':''}${expired?' · EXPIRED':''}</div>`:''}
             ${m.venue?`<div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:2px;">📍 ${escHtml(m.venue)}</div>`:''}
             <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-top:2px;">${m.totalOvers}ov · ${r.ballsPerOver}b/over · ${m.bowlingMode==='standard'?'Standard':'⚡ Charlie'}</div>
             ${m.scheduledByName?`<div style="font-size:10px;color:var(--home-muted);font-family:var(--fu);margin-top:2px;">Scheduled by ${escHtml(m.scheduledByName)}</div>`:''}
@@ -2386,11 +2413,31 @@ function renderScheduledMatches(){
         </div>
         <div style="display:flex;gap:6px;">
           <button onclick="editScheduledMatch('${m.matchId}')" style="flex:1;background:#f1f5f9;border:1px solid var(--home-border);border-radius:8px;color:var(--home-text);padding:8px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">✎ Edit</button>
-          ${ready?`<button onclick="startScheduledMatch('${m.matchId}')" style="flex:2;background:linear-gradient(135deg,var(--grass),var(--grass2));border:none;border-radius:8px;color:#fff;padding:8px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">▶ Start Scoring</button>`:`<button onclick="editScheduledMatch('${m.matchId}')" style="flex:2;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;color:#b45309;padding:8px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">+ Add Players</button>`}
+          ${expired?`
+            <button onclick="startScheduledMatch('${m.matchId}')" style="flex:1;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;color:#b45309;padding:8px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">▶ Start Anyway</button>
+            <button onclick="archiveExpiredMatch('${m.matchId}')" style="flex:1;background:#f1f5f9;border:1px solid var(--home-border);border-radius:8px;color:var(--home-muted);padding:8px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">📦 Archive</button>
+          `:(ready?`<button onclick="startScheduledMatch('${m.matchId}')" style="flex:2;background:linear-gradient(135deg,var(--grass),var(--grass2));border:none;border-radius:8px;color:#fff;padding:8px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">▶ Start Scoring</button>`:`<button onclick="editScheduledMatch('${m.matchId}')" style="flex:2;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;color:#b45309;padding:8px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">+ Add Players</button>`)}
           <button onclick="deleteScheduledMatch('${m.matchId}')" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#dc2626;padding:8px 10px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;">✕</button>
         </div>
       </div>`;
-    }).join('');
+  }
+
+  let content='';
+  if(upcoming.length===0&&past.length===0){
+    content=`<div class="empty-state" style="padding:60px 20px;">
+      <div class="empty-icon">📅</div>
+      <div class="empty-text">No scheduled matches yet.<br>Tap <strong>+ Schedule</strong> to plan a match for later.</div>
+    </div>`;
+  }else{
+    if(upcoming.length>0){
+      content+=`<div style="font-size:10px;color:var(--grass);font-family:var(--fu);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;">📅 Upcoming (${upcoming.length})</div>`;
+      content+=upcoming.map(m=>matchCard(m,false)).join('');
+    }
+    if(past.length>0){
+      content+=`<div style="font-size:10px;color:#dc2626;font-family:var(--fu);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin:16px 0 8px;">⏰ Past Schedule Date (${past.length})</div>`;
+      content+=`<div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-bottom:10px;">These matches were not started. Start them anyway or archive as not played.</div>`;
+      content+=past.map(m=>matchCard(m,true)).join('');
+    }
   }
 
   return `<div class="screen light active">
@@ -2401,7 +2448,7 @@ function renderScheduledMatches(){
     </div>
     <div class="screen-inner light">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;font-weight:600;">${scheduled.length} match${scheduled.length!==1?'es':''} scheduled</div>
+        <div style="font-family:var(--fu);font-size:11px;letter-spacing:2px;color:var(--home-muted);text-transform:uppercase;font-weight:600;">${upcoming.length} upcoming${past.length>0?' · '+past.length+' expired':''}</div>
         <button onclick="refreshScheduledMatches()" style="background:none;border:none;color:var(--grass2);font-size:11px;font-family:var(--fu);font-weight:700;cursor:pointer;">↻ Refresh</button>
       </div>
       ${content}
