@@ -1003,7 +1003,7 @@ function loadFromFirestore(){
   }).catch(()=>{});
   // Load saved matches from Firestore (merge with local)
   // Force server fetch for completed matches (bypass stale cache)
-  db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(20).get({source:'server'}).then(snap=>{
+  db.collection('matches').where('complete','==',true).limit(50).get({source:'server'}).then(snap=>{
     const fbMatches=[];
     snap.forEach(doc=>{const d=doc.data();noteRemoteSchema(d.schemaVersion);fbMatches.push(d);});
     const merged=[...state.savedMatches];
@@ -1018,7 +1018,7 @@ function loadFromFirestore(){
   }).catch(e=>{
     console.warn('Completed matches server fetch failed, trying cache:',e.message);
     // Fallback to cache if offline
-    db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(20).get().then(snap=>{
+    db.collection('matches').where('complete','==',true).limit(50).get().then(snap=>{
       const fbMatches=[];
       snap.forEach(doc=>{const d=doc.data();fbMatches.push(d);});
       const merged=[...state.savedMatches];
@@ -6212,19 +6212,40 @@ function pushMatchesToCloud(){
   if(matches.length===0){toast('No matches to push','warn');return;}
   toast('Pushing '+matches.length+' match'+(matches.length!==1?'es':'')+'...','info');
   let ok=0,fail=0;
+  const errors=[];
   const promises=matches.map(m=>{
     if(!m.matchId)m.matchId='m_'+uid();
-    return syncMatchDocToFirestore(m)?Promise.resolve(ok++):Promise.resolve(ok++);
+    const doc={
+      matchId:m.matchId,teamA:m.teamA,teamB:m.teamB,
+      format:m.format,totalOvers:m.totalOvers,bowlingMode:m.bowlingMode,
+      tossWinner:m.tossWinner,tossChoice:m.tossChoice,batting1st:m.batting1st,
+      rules:m.rules,playersA:m.playersA,playersB:m.playersB,
+      captainA:m.captainA||null,captainB:m.captainB||null,
+      keeperA:m.keeperA||null,keeperB:m.keeperB||null,
+      innings:m.innings,playerNotes:m.playerNotes||[],
+      potm:m.potm||null,targetAdjustment:m.targetAdjustment||0,
+      matchDate:m.matchDate||'',venue:m.venue||'',
+      complete:!!m.complete,date:m.date||null,
+      schemaVersion:SCHEMA_VERSION,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy:fbUid
+    };
+    return db.collection('matches').doc(m.matchId).set(doc,{merge:true})
+      .then(()=>{ok++;})
+      .catch(e=>{fail++;errors.push(m.teamA+' vs '+m.teamB+': '+e.message);});
   });
-  // syncMatchDocToFirestore is fire-and-forget, give it a moment
-  setTimeout(()=>{toast('Pushed '+matches.length+' match'+(matches.length!==1?'es':'')+' to cloud','success');},1500);
+  Promise.all(promises).then(()=>{
+    if(fail===0)toast('Pushed '+ok+' match'+(ok!==1?'es':'')+' to cloud','success');
+    else toast('Pushed '+ok+', failed '+fail+': '+errors[0],'error');
+  });
 }
 window.pushMatchesToCloud=pushMatchesToCloud;
 
 function refreshMatchesFromCloud(){
   if(!db){toast('Not connected to cloud','error');return;}
   toast('Refreshing from cloud...','info');
-  db.collection('matches').where('complete','==',true).orderBy('date','desc').limit(50).get({source:'server'}).then(snap=>{
+  // No orderBy — avoids needing a composite index; we sort client-side
+  db.collection('matches').where('complete','==',true).limit(50).get({source:'server'}).then(snap=>{
     const fbMatches=[];
     snap.forEach(doc=>fbMatches.push(doc.data()));
     // Merge: cloud wins, keep local-only matches too
