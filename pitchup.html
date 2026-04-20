@@ -2116,28 +2116,7 @@ function renderHome(){
       ${teams.length===0?'':''}</div>`;
   }
 
-  // Match history
-  let histHtml='';
-  if(matches.length>0){
-    histHtml=`<div class="home-sec">
-      <div class="home-sec-title" style="display:flex;justify-content:space-between;align-items:center;">
-        <span>Recent Matches</span>
-        <button onclick="state.screen='match_history';render()" style="background:none;border:none;color:var(--grass2);font-size:12px;font-family:'Rajdhani',sans-serif;font-weight:700;cursor:pointer;letter-spacing:1px;">VIEW ALL (${matches.length}) →</button>
-      </div>
-      ${matches.slice(0,3).map((m,i)=>{
-        const r=m.rules||DEFAULT_RULES;
-        const d=new Date(m.date||0).toLocaleDateString('en-GB');
-        const i1=m.innings?.[0],i2=m.innings?.[1];
-        const s1=i1?.total||0,s2=i2?.total||0;
-        const winner=s1>s2?m.teamA:s2>s1?m.teamB:null;
-        return `<div class="match-card" style="cursor:pointer;" onclick="state.screen='match_history';render()">
-          <div style="flex:1;">
-            <div class="match-vs">${escHtml(m.teamA)} vs ${escHtml(m.teamB)}</div>
-            <div class="match-meta">${i1?s1+'/'+i1.wickets:''} vs ${i2?s2+'/'+i2.wickets:''} · ${winner?escHtml(winner)+' won':'Tie'} · ${d}</div>
-          </div>
-        </div>`;}).join('')}
-    </div>`;
-  }
+  // Recent matches section removed — dedicated Completed Matches card handles this
 
   return `<div class="screen light active">
     <div class="home-topbar" style="flex-wrap:wrap;gap:8px;">
@@ -2222,7 +2201,6 @@ function renderHome(){
       ${quickStart}
       ${activeHtml}
       ${teamsHtml}
-      ${histHtml}
       ${teams.length===0&&matches.length===0?`
         <div class="home-sec">
           <div class="empty-state">
