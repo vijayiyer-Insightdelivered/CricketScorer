@@ -2210,6 +2210,14 @@ function renderHome(){
           </div>
           <span class="ac-arrow" style="color:#64748b;">›</span>
         </div>
+        <div class="action-card secondary" onclick="state.screen='match_history';render()">
+          <div class="ac-icon white-green" style="background:#f1f5f9;color:#475569;">📋</div>
+          <div>
+            <div class="ac-title">Completed Matches${matches.length>0?' <span style="font-size:10px;color:var(--grass);">('+matches.length+')</span>':''}</div>
+            <div class="ac-sub">View scorecards, export CSV, push & refresh</div>
+          </div>
+          <span class="ac-arrow" style="color:#64748b;">›</span>
+        </div>
       </div>
       ${quickStart}
       ${activeHtml}
