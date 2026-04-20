@@ -478,7 +478,7 @@ function sentryCapture(err,context){
   }catch(e){}
 }
 
-const DEFAULT_RULES={ballsPerOver:6,wideRuns:1,wideBowlAgain:true,noBallRuns:1,noBallBowlAgain:true,retirementScore:0,maxOversPerBowler:0,playToFullOvers:false};
+const DEFAULT_RULES={ballsPerOver:6,wideRuns:1,wideBowlAgain:true,noBallRuns:1,noBallBowlAgain:true,retirementScore:0,retirementBalls:0,maxOversPerBowler:0,playToFullOvers:false};
 const STORAGE_KEY='pitchup_v1';
 const WICKET_TYPES=['Bowled','Caught','LBW','Run Out','Stumped','Hit Wicket','Retired'];
 const RETIRE_REASONS=['By Mistake','Coach decision','Injury','Illness','Other'];
@@ -1394,16 +1394,19 @@ function scoreRuns(runs){
     if(inn.legalBalls%bpo===0){inn.overs+=1;inn.currentBatters=[inn.currentBatters[1],inn.currentBatters[0]];}
     // Charlie mode: swap bowlers every delivery. Standard: no auto-swap (scorer manually picks each over)
     if(charlie) inn.charlieBowlers=[inn.charlieBowlers[1],inn.charlieBowlers[0]];
-    if(rules.retirementScore>0&&ab&&ab.runs>=rules.retirementScore){
-      // Retire at each multiple of retirementScore (25, 50, 75, ...)
+    if(ab){
       const timesRetired=ab.retireCount||0;
-      const nextThreshold=rules.retirementScore*(timesRetired+1);
-      if(ab.runs>=nextThreshold){
-        // Only retire if there's another batter available (fresh or retired not-out)
+      const retScore=rules.retirementScore;
+      const retBalls=rules.retirementBalls||0;
+      // Check retirement: by score threshold OR by balls faced threshold
+      const hitScoreThreshold=retScore>0&&ab.runs>=retScore*(timesRetired+1);
+      const hitBallsThreshold=retBalls>0&&ab.balls>=retBalls*(timesRetired+1);
+      if(hitScoreThreshold||hitBallsThreshold){
         const hasReplacement=inn.batters.some(b=>b.id!==ab.id&&!b.out&&!inn.currentBatters.includes(b.id));
         if(hasReplacement){
           ab.retired=true;ab.retireCount=timesRetired+1;ab.retiredAt=Date.now();
-          inn.currentBatters=inn.currentBatters.map(id=>id===ab.id?null:id);retiredName=ab.name;
+          inn.currentBatters=inn.currentBatters.map(id=>id===ab.id?null:id);
+          retiredName=ab.name;
         }
       }
     }
@@ -1657,6 +1660,8 @@ function stepRule(f,d,mn,mx){setupData.rules[f]=Math.min(mx,Math.max(mn,setupDat
 window.stepRule=stepRule;
 function retirementInc(){setupData.rules.retirementScore=setupData.rules.retirementScore===0?20:setupData.rules.retirementScore+5;render();}
 window.retirementInc=retirementInc;
+function retirementBallsInc(){setupData.rules.retirementBalls=(setupData.rules.retirementBalls||0)===0?20:(setupData.rules.retirementBalls||0)+5;render();}
+window.retirementBallsInc=retirementBallsInc;
 function setSquadSize(t,d){if(t==='A')setupData.sizeA=Math.min(15,Math.max(2,setupData.sizeA+d));else setupData.sizeB=Math.min(15,Math.max(2,setupData.sizeB+d));render();}
 window.setSquadSize=setSquadSize;
 function updateSetupPlayer(t,i,v){if(t==='A')setupData.playersA[i]=v;else setupData.playersB[i]=v;}
@@ -2639,14 +2644,29 @@ function renderRulesConfig(r){
     </div>
     <div class="rules-sec" style="background:rgba(129,140,248,.03);border:1px solid rgba(129,140,248,.14);">
       <div class="rules-sec-title" style="color:#a78bfa;">🏃 Batter Retirement</div>
-      <div class="stepper-label" style="margin-bottom:3px;">Auto-retire at score</div>
-      <div class="stepper-desc" style="margin-bottom:10px;">0 = disabled</div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <button class="stepper-btn" onclick="stepRule('retirementScore',-5,0,100)">−</button>
-        <span class="retire-val" style="color:${r.retirementScore>0?'#a78bfa':'var(--muted)'};">${r.retirementScore>0?r.retirementScore:'OFF'}</span>
-        <button class="stepper-btn" onclick="retirementInc()">+</button>
-        ${r.retirementScore>0?`<button style="background:none;border:1px solid var(--border);border-radius:7px;color:var(--home-muted);padding:4px 9px;cursor:pointer;font-size:11px;" onclick="stepRule('retirementScore',-100,0,100)">Off</button>`:''}
+      <div style="margin-bottom:14px;">
+        <div class="stepper-label" style="margin-bottom:3px;">Auto-retire at score</div>
+        <div class="stepper-desc" style="margin-bottom:8px;">0 = disabled · Retires at each multiple (25, 50, 75...)</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="stepper-btn" onclick="stepRule('retirementScore',-5,0,100)">−</button>
+          <span class="retire-val" style="color:${r.retirementScore>0?'#a78bfa':'var(--muted)'};">${r.retirementScore>0?r.retirementScore:'OFF'}</span>
+          <button class="stepper-btn" onclick="retirementInc()">+</button>
+          ${r.retirementScore>0?`<button style="background:none;border:1px solid var(--border);border-radius:7px;color:var(--home-muted);padding:4px 9px;cursor:pointer;font-size:11px;" onclick="stepRule('retirementScore',-100,0,100)">Off</button>`:''}
+        </div>
       </div>
+      <div>
+        <div class="stepper-label" style="margin-bottom:3px;">Auto-retire at balls faced</div>
+        <div class="stepper-desc" style="margin-bottom:8px;">0 = disabled · Wides & No Balls don't count</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="stepper-btn" onclick="stepRule('retirementBalls',-5,0,100)">−</button>
+          <span class="retire-val" style="color:${r.retirementBalls>0?'#a78bfa':'var(--muted)'};">${r.retirementBalls>0?r.retirementBalls:'OFF'}</span>
+          <button class="stepper-btn" onclick="retirementBallsInc()">+</button>
+          ${r.retirementBalls>0?`<button style="background:none;border:1px solid var(--border);border-radius:7px;color:var(--home-muted);padding:4px 9px;cursor:pointer;font-size:11px;" onclick="stepRule('retirementBalls',-100,0,100)">Off</button>`:''}
+        </div>
+      </div>
+      ${r.retirementScore>0||r.retirementBalls>0?`<div style="font-size:10px;color:var(--home-muted);margin-top:10px;font-family:var(--fu);line-height:1.5;">
+        Batter retires when <strong>either</strong> threshold is reached (whichever comes first).${r.retirementScore>0&&r.retirementBalls>0?' E.g. retire at '+r.retirementScore+' runs OR '+r.retirementBalls+' balls.':''}
+      </div>`:''}
     </div>
     <div class="rules-sec" style="background:rgba(22,163,74,.04);border:1px solid rgba(22,163,74,.18);">
       <div class="rules-sec-title" style="color:var(--grass);">👶 Junior Cricket</div>
@@ -3153,7 +3173,8 @@ function renderScoring(){
   let batsHtml='';
   inn.currentBatters.forEach((bId,i)=>{
     const b=inn.batters.find(x=>x.id===bId);if(!b)return;
-    const nr=rules.retirementScore>0&&b.runs>=rules.retirementScore-5;
+    const retBalls=rules.retirementBalls||0;
+    const nr=(rules.retirementScore>0&&b.runs>=rules.retirementScore-5)||(retBalls>0&&b.balls>=retBalls-5);
     batsHtml+=`<div class="sb-batter ${i===0?'striker':''}" onclick="${i===0?'openModal(\'striker\',{})':''}">
       <span class="sb-role">${i===0?'⚡ STRIKER':'NON-STRIKER'}</span>
       <span class="sb-name">${escHtml(b.name)}</span>
@@ -3235,7 +3256,8 @@ function renderScoring(){
             <span style="font-family:var(--fu);font-size:12px;font-weight:700;color:#dc2626;">Select Batter</span>
             <span style="font-size:10px;color:var(--home-muted);font-family:var(--fu);">${i===0?'Striker':'Non-striker'} needed</span>
           </div>`;
-          const nr=rules.retirementScore>0&&b.runs>=rules.retirementScore-5;
+          const retBalls=rules.retirementBalls||0;
+          const nr=(rules.retirementScore>0&&b.runs>=rules.retirementScore-5)||(retBalls>0&&b.balls>=retBalls-5);
           const sr=b.balls>0?((b.runs/b.balls)*100).toFixed(0):'-';
           return `<div class="sb-batter ${i===0?'striker':''}" style="flex:1;min-width:110px;cursor:pointer;" onclick="openModal('striker',{})">
             <span class="sb-role">${i===0?'⚡ STRIKER':'NON-STRIKER'}</span>
