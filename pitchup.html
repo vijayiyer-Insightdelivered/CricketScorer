@@ -2863,13 +2863,17 @@ function renderSetup(){
     const hasName=players[i]&&players[i].trim();
     const isCap=captainIdx===i;
     const isKpr=keeperIdx===i;
-    sq+=`<div class="squad-row" style="display:flex;align-items:center;gap:4px;margin-bottom:7px;">
-      <span style="color:var(--home-muted);font-size:11px;width:18px;text-align:right;font-family:'Rajdhani',sans-serif;">${i+1}</span>
-      <input style="flex:1;background:${isCap?'#fffbeb':isKpr?'#f5f3ff':'#fff'};border:1px solid ${isCap?'#fde68a':isKpr?'#ddd6fe':'var(--home-border)'};border-radius:9px;color:var(--home-text);padding:9px 10px;font-size:13px;font-family:'Source Sans 3',sans-serif;"
+    sq+=`<div class="squad-row" style="display:flex;align-items:center;gap:3px;margin-bottom:6px;${hasName?'background:#fff;border:1px solid var(--home-border);border-radius:10px;padding:6px 6px 6px 0;':''}">
+      <div style="display:flex;flex-direction:column;gap:1px;flex-shrink:0;">
+        <button onclick="moveSetupPlayer('${side}',${i},-1)" ${i===0?'disabled':''}  style="width:22px;height:16px;border:none;border-radius:4px 4px 0 0;background:${i===0?'transparent':'#f1f5f9'};color:${i===0?'transparent':'var(--home-muted)'};cursor:${i===0?'default':'pointer'};font-size:10px;display:flex;align-items:center;justify-content:center;">▲</button>
+        <button onclick="moveSetupPlayer('${side}',${i},1)" ${i>=size-1?'disabled':''} style="width:22px;height:16px;border:none;border-radius:0 0 4px 4px;background:${i>=size-1?'transparent':'#f1f5f9'};color:${i>=size-1?'transparent':'var(--home-muted)'};cursor:${i>=size-1?'default':'pointer'};font-size:10px;display:flex;align-items:center;justify-content:center;">▼</button>
+      </div>
+      <span style="color:var(--home-muted);font-size:11px;width:16px;text-align:center;font-family:'Rajdhani',sans-serif;font-weight:700;">${i+1}</span>
+      <input style="flex:1;background:${isCap?'#fffbeb':isKpr?'#f5f3ff':'transparent'};border:none;color:var(--home-text);padding:6px 8px;font-size:13px;font-family:'Source Sans 3',sans-serif;outline:none;"
         value="${escHtml(players[i]||'')}" placeholder="Player ${i+1}" oninput="updateSetupPlayer('${side}',${i},this.value)" onchange="updateSetupPlayer('${side}',${i},this.value)"/>
-      ${hasName?`<button onclick="setSetupCaptain('${side}',${i})" title="${isCap?'Remove captain':'Set as captain'}" style="width:26px;height:26px;border-radius:50%;border:1.5px solid ${isCap?'#d97706':'var(--home-border)'};background:${isCap?'#d97706':'#fff'};color:${isCap?'#fff':'var(--home-muted)'};cursor:pointer;font-size:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--fu);font-weight:700;">${isCap?'©':'C'}</button>`:''}
-      ${hasName?`<button onclick="setSetupKeeper('${side}',${i})" title="${isKpr?'Remove keeper':'Set as keeper'}" style="width:26px;height:26px;border-radius:50%;border:1.5px solid ${isKpr?'#7c3aed':'var(--home-border)'};background:${isKpr?'#7c3aed':'#fff'};color:${isKpr?'#fff':'var(--home-muted)'};cursor:pointer;font-size:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">🧤</button>`:''}
-      ${hasName?`<button onclick="clearSetupPlayer('${side}',${i})" title="Remove" style="background:#fef2f2;border:1px solid #fecaca;border-radius:7px;color:#dc2626;width:26px;height:26px;cursor:pointer;font-size:11px;flex-shrink:0;">✕</button>`:'<span style="width:80px;flex-shrink:0;"></span>'}
+      ${hasName?`<button onclick="setSetupCaptain('${side}',${i})" title="${isCap?'Remove captain':'Set as captain'}" style="width:24px;height:24px;border-radius:50%;border:1.5px solid ${isCap?'#d97706':'var(--home-border)'};background:${isCap?'#d97706':'transparent'};color:${isCap?'#fff':'var(--home-muted)'};cursor:pointer;font-size:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--fu);font-weight:700;">${isCap?'©':'C'}</button>`:''}
+      ${hasName?`<button onclick="setSetupKeeper('${side}',${i})" title="${isKpr?'Remove keeper':'Set as keeper'}" style="width:24px;height:24px;border-radius:50%;border:1.5px solid ${isKpr?'#7c3aed':'var(--home-border)'};background:${isKpr?'#7c3aed':'transparent'};color:${isKpr?'#fff':'var(--home-muted)'};cursor:pointer;font-size:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">🧤</button>`:''}
+      ${hasName?`<button onclick="clearSetupPlayer('${side}',${i})" title="Remove" style="background:transparent;border:none;color:#dc2626;width:24px;height:24px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>`:''}
     </div>`;
   }
   // Clear-all button row
@@ -2929,6 +2933,25 @@ function setSetupKeeper(side,idx){
   render();
 }
 window.setSetupKeeper=setSetupKeeper;
+
+function moveSetupPlayer(side,idx,dir){
+  const arr=side==='A'?setupData.playersA:setupData.playersB;
+  const sizeKey=side==='A'?'sizeA':'sizeB';
+  const size=setupData[sizeKey];
+  const newIdx=idx+dir;
+  if(newIdx<0||newIdx>=size)return;
+  // Swap players
+  const tmp=arr[idx];arr[idx]=arr[newIdx];arr[newIdx]=tmp;
+  // Update captain/keeper indexes if they were swapped
+  const capKey=side==='A'?'captainA':'captainB';
+  const kprKey=side==='A'?'keeperA':'keeperB';
+  if(setupData[capKey]===idx)setupData[capKey]=newIdx;
+  else if(setupData[capKey]===newIdx)setupData[capKey]=idx;
+  if(setupData[kprKey]===idx)setupData[kprKey]=newIdx;
+  else if(setupData[kprKey]===newIdx)setupData[kprKey]=idx;
+  render();
+}
+window.moveSetupPlayer=moveSetupPlayer;
 
 function clearSetupPlayer(side,idx){
   const arr=side==='A'?setupData.playersA:setupData.playersB;
