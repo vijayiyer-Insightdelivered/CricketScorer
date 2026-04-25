@@ -1,6 +1,6 @@
 // PitchUp Service Worker
 // Strategy: network-first for HTML (always get latest), cache-first for static assets
-const CACHE_VERSION = 'pitchup-v2';
+const CACHE_VERSION = 'pitchup-v3';
 const HTML_URLS = ['/', '/pitchup.html', '/index.html'];
 
 self.addEventListener('install', e => {
