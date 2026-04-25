@@ -6621,9 +6621,12 @@ let lawsOpenId=null;         // law number currently expanded in browse tab
 let umpireInput='';          // current draft question
 let umpireBusy=false;        // true while online AI call in flight
 let umpireMessages=[];       // [{role:'user'|'umpire', text, laws?:[], mode?:'offline'|'online'|'none'}]
-// Optional AI endpoint. Point this at a Railway (or other) proxy that forwards to Claude/OpenAI.
+// AI endpoint — point this at the umpire-service Railway deployment (see /umpire-service/README.md).
 // Leave empty and the chat stays offline-only.
-const UMPIRE_AI_ENDPOINT='';  // e.g. 'https://pitchup-umpire.up.railway.app/api/umpire'
+const UMPIRE_AI_ENDPOINT='';  // e.g. 'https://pitchup-umpire-production.up.railway.app/api/umpire'
+// Shared secret matching PITCHUP_SHARED_SECRET on the proxy. Sent as X-Pitchup-Token.
+// Visible in page source — this is a deflection layer, not real auth (CORS + per-IP rate limit do the heavy lifting).
+const UMPIRE_AI_TOKEN='';
 
 async function askUmpire(question){
   const q=(question||'').trim();
@@ -6656,9 +6659,11 @@ async function askUmpire(question){
   // Call remote AI
   umpireBusy=true;render();
   try{
+    const headers={'Content-Type':'application/json'};
+    if(UMPIRE_AI_TOKEN)headers['X-Pitchup-Token']=UMPIRE_AI_TOKEN;
     const res=await fetch(UMPIRE_AI_ENDPOINT,{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers,
       body:JSON.stringify({question:q,context:hits.map(h=>({n:h.law.n,title:h.law.title,summary:h.law.summary}))})
     });
     if(!res.ok)throw new Error('HTTP '+res.status);
