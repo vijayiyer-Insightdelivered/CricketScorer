@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.2.1';
+const APP_VERSION='2.3.0';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -1639,6 +1639,225 @@ function scoreWicket(outId,type,runs,fielder){
 function swapBowlers(){updateInn(inn=>{inn.charlieBowlers=[inn.charlieBowlers[1],inn.charlieBowlers[0]];return inn;});render();}
 window.swapBowlers=swapBowlers;
 
+// ─── BALL-BY-BALL EDITOR (Phase 1) ────────────────────────────────────────────
+// Lets the scorer fix data-entry mistakes on any past ball — runs, extra type,
+// striker, bowler — without touching the wicket toggle. Aggregates are rebuilt
+// from the full delivery list so per-batter / per-bowler figures stay in sync.
+let ballLogEditIdx=null;
+
+function _buildDismissalString(type,bowlerName,fielder){
+  if(type==='Bowled')return 'b '+(bowlerName||'');
+  if(type==='Caught')return 'c '+(fielder||'?')+' b '+(bowlerName||'');
+  if(type==='LBW')return 'lbw b '+(bowlerName||'');
+  if(type==='Run Out')return 'run out'+(fielder?' ('+fielder+')':'');
+  if(type==='Stumped')return 'st '+(fielder||'?')+' b '+(bowlerName||'');
+  if(type==='Hit Wicket')return 'hit wicket b '+(bowlerName||'');
+  return (type||'').toLowerCase();
+}
+
+function recomputeInningsFromDeliveries(inn,rules,bpo){
+  inn.batters.forEach(b=>{
+    b.runs=0;b.balls=0;b.fours=0;b.sixes=0;
+    b.out=false;b.dismissal='';b.dismissalType='';b.dismissalFielder='';b.dismissalBowler='';
+  });
+  inn.bowlers.forEach(b=>{
+    b.balls=0;b.runs=0;b.wickets=0;b.wides=0;b.noBalls=0;
+  });
+  inn.total=0;inn.legalBalls=0;
+  inn.extras={total:0,wides:0,noBalls:0,byes:0,legByes:0};
+  inn.deliveries.forEach(d=>{
+    const batter=inn.batters.find(b=>b.name===d.batter);
+    const bowler=inn.bowlers.find(b=>b.name===d.bowler);
+    const r=Number(d.runs)||0;
+    if(d.isWicket){
+      if(batter){batter.runs+=r;batter.balls+=1;batter.out=true;}
+      if(bowler){bowler.balls+=1;bowler.runs+=r;}
+      const m=(d.event||'').match(/W\s*\(([^)]+)\)/);
+      const wType=m?m[1]:'';
+      if(bowler&&wType&&wType!=='Run Out')bowler.wickets+=1;
+      if(batter){
+        batter.dismissalType=wType;
+        batter.dismissalFielder=d.fielder||'';
+        batter.dismissalBowler=bowler?bowler.name:'';
+        batter.dismissal=_buildDismissalString(wType,bowler?.name,d.fielder);
+      }
+      inn.total+=r;inn.legalBalls+=1;
+    }else if(d.isExtra){
+      const isWide=d.extraType==='Wide';
+      const isNB=d.extraType==='No Ball';
+      const isBye=d.extraType==='Bye';
+      const isLB=d.extraType==='Leg Bye';
+      const isLegal=(isWide&&!rules.wideBowlAgain)||(isNB&&!rules.noBallBowlAgain)||isBye||isLB;
+      inn.total+=r;inn.extras.total+=r;
+      if(isWide){inn.extras.wides+=r;if(bowler){bowler.runs+=r;bowler.wides+=1;}}
+      if(isNB){inn.extras.noBalls+=r;if(bowler){bowler.runs+=r;bowler.noBalls+=1;}}
+      if(isBye)inn.extras.byes+=r;
+      if(isLB)inn.extras.legByes+=r;
+      if(isLegal){
+        inn.legalBalls+=1;
+        if(bowler)bowler.balls+=1;
+      }
+    }else{
+      if(batter){
+        batter.runs+=r;batter.balls+=1;
+        if(r===4)batter.fours+=1;
+        if(r===6)batter.sixes+=1;
+      }
+      if(bowler){bowler.runs+=r;bowler.balls+=1;}
+      inn.total+=r;inn.legalBalls+=1;
+    }
+  });
+  inn.overs=Math.floor(inn.legalBalls/bpo);
+  inn.wickets=inn.batters.filter(b=>b.out).length;
+}
+
+function renderBallLog(){
+  const inn=getInn();
+  if(!inn){state.screen='home';return renderHome();}
+  const bpo=getBpo();
+  const overs={};
+  inn.deliveries.forEach((d,idx)=>{
+    const ov=d.over||0;
+    if(!overs[ov])overs[ov]=[];
+    overs[ov].push({d,idx});
+  });
+  const overKeys=Object.keys(overs).sort((a,b)=>(+a)-(+b));
+  return `<div class="screen light active">
+    <div class="topbar light">
+      <button class="topbar-back" onclick="state.screen='scoring';render()" style="color:#64748b;">←</button>
+      <span class="topbar-title" style="color:#0f172a;">📜 Ball Log · Innings ${state.currentInnings+1}</span>
+      <div style="width:40px;"></div>
+    </div>
+    <div class="screen-inner light">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:#1e40af;font-family:var(--fb);line-height:1.5;">
+        💡 Tap any ball to fix runs, extra type, batter or bowler. Wickets are locked from being added/removed here — use ↩ undo on the scoring screen for that.
+      </div>
+      <div style="font-size:11px;color:var(--home-muted);font-family:var(--fu);margin-bottom:10px;text-align:center;">${inn.deliveries.length} ball${inn.deliveries.length===1?'':'s'} · ${inn.total}/${inn.wickets} so far</div>
+      ${inn.deliveries.length===0?`<div style="text-align:center;padding:40px;color:var(--home-muted);font-family:var(--fu);">No balls bowled yet</div>`:''}
+      ${overKeys.map(ov=>{
+        const balls=overs[ov];
+        return `<div style="background:#fff;border:1px solid var(--home-border);border-radius:11px;margin-bottom:8px;overflow:hidden;">
+          <div style="background:#f1f5f9;padding:6px 12px;font-family:var(--fu);font-size:11px;font-weight:700;letter-spacing:1.2px;color:var(--home-text);">OVER ${(+ov)+1}</div>
+          ${balls.map((entry,i)=>{
+            const d=entry.d;
+            const evDisp=d.isWicket?'🔻 W':d.isExtra?'➕ '+(d.extraType||''):String(d.runs);
+            const evColor=d.isWicket?'#dc2626':d.isExtra?'#b45309':(d.runs>=4?'var(--grass)':'var(--home-text)');
+            return `<button onclick="openModal('ballEdit',{idx:${entry.idx}})" style="display:flex;width:100%;padding:9px 12px;background:none;border:none;${i>0?'border-top:1px solid #f1f5f9;':''}cursor:pointer;align-items:center;gap:10px;text-align:left;">
+              <span style="font-family:var(--fd);font-size:12px;color:var(--home-muted);min-width:24px;">${i+1}</span>
+              <span style="font-family:var(--fu);font-size:12px;font-weight:700;color:${evColor};min-width:54px;">${evDisp}</span>
+              <span style="flex:1;font-size:12px;color:#475569;font-family:var(--fb);">${escHtml(d.batter||'-')} <span style="color:var(--home-muted);font-size:10px;">· bowled by ·</span> ${escHtml(d.bowler||'-')}</span>
+              <span style="font-family:var(--fu);font-size:11px;font-weight:700;color:var(--home-text);">${d.runs}r</span>
+              <span style="color:var(--home-muted);font-size:14px;">✎</span>
+            </button>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function renderBallEditModal(data){
+  const inn=getInn();
+  if(!inn||!data||data.idx==null)return '<div class="modal-sheet">No delivery</div>';
+  const idx=data.idx;
+  const d=inn.deliveries[idx];
+  if(!d)return '<div class="modal-sheet">Delivery not found</div>';
+  const isWicket=!!d.isWicket;
+  const types=['Normal','Wide','No Ball','Bye','Leg Bye'];
+  const currentType=isWicket?'Wicket':(d.isExtra?(d.extraType||'Normal'):'Normal');
+  const batterOpts=inn.batters.map(b=>`<option value="${escHtml(b.name)}" ${d.batter===b.name?'selected':''}>${escHtml(b.name)}</option>`).join('');
+  const bowlerOpts=inn.bowlers.map(b=>`<option value="${escHtml(b.name)}" ${d.bowler===b.name?'selected':''}>${escHtml(b.name)}</option>`).join('');
+  const typeOpts=types.map(t=>`<option ${currentType===t?'selected':''}>${t}</option>`).join('');
+  const ballsInOver=inn.deliveries.filter(x=>(x.over||0)===(d.over||0)).length;
+  const remainingInOver=inn.deliveries.filter((x,i)=>(x.over||0)===(d.over||0)&&i>idx).length;
+  return `<div class="modal-sheet" style="max-width:430px;max-height:90vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Edit Ball ${idx+1}</div>
+    <div class="modal-sub">Over ${(d.over||0)+1} · currently <strong>${escHtml(d.event||'')}</strong> · ${d.runs}r</div>
+    ${isWicket?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:9px;padding:10px;margin:0 0 12px 0;font-size:11.5px;color:#dc2626;font-family:var(--fb);line-height:1.5;">
+      🔒 <strong>Wicket line.</strong> The dismissal itself can\'t be removed here — for that, use ↩ undo on the scoring screen. You can still fix the runs scored, the batter who was on strike, or the bowler.
+    </div>`:`<div class="form-section">
+      <label class="form-label">Delivery type</label>
+      <select id="bleType" class="form-input">${typeOpts}</select>
+    </div>`}
+    <div class="form-section">
+      <label class="form-label">Total runs scored on this ball</label>
+      <select id="bleRuns" class="form-input">
+        ${[0,1,2,3,4,5,6,7].map(n=>`<option ${(d.runs||0)===n?'selected':''}>${n}</option>`).join('')}
+      </select>
+      <div style="font-size:10px;color:var(--home-muted);margin-top:4px;font-family:var(--fu);">For extras, enter the total (e.g. wide+2byes = 3).</div>
+    </div>
+    <div class="form-section">
+      <label class="form-label">Striker (batter on strike)</label>
+      <select id="bleBatter" class="form-input">${batterOpts}</select>
+      ${remainingInOver>0?`<label style="display:flex;align-items:center;gap:6px;font-size:11px;font-family:var(--fu);color:var(--home-muted);margin-top:6px;cursor:pointer;">
+        <input type="checkbox" id="bleBatterToOver"/> Apply this batter to the next ${remainingInOver} ball${remainingInOver===1?'':'s'} of this over too
+      </label>`:''}
+    </div>
+    <div class="form-section">
+      <label class="form-label">Bowler</label>
+      <select id="bleBowler" class="form-input">${bowlerOpts}</select>
+      ${ballsInOver>1?`<label style="display:flex;align-items:center;gap:6px;font-size:11px;font-family:var(--fu);color:var(--home-muted);margin-top:6px;cursor:pointer;">
+        <input type="checkbox" id="bleBowlerToOver" checked/> Apply to all ${ballsInOver} balls in this over (recommended)
+      </label>`:''}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="modal-cancel" style="flex:1;" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" style="flex:1;" onclick="saveBallLogEdit(${idx})">Save</button>
+    </div>
+  </div>`;
+}
+
+function saveBallLogEdit(idx){
+  if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot edit.','error');return;}
+  const inn0=getInn();
+  if(!inn0||!inn0.deliveries[idx]){closeModal();return;}
+  const newRuns=parseInt(document.getElementById('bleRuns').value,10)||0;
+  const newBatter=document.getElementById('bleBatter').value;
+  const newBowler=document.getElementById('bleBowler').value;
+  const cbBowler=document.getElementById('bleBowlerToOver');
+  const cbBatter=document.getElementById('bleBatterToOver');
+  const applyBowlerToOver=cbBowler?cbBowler.checked:false;
+  const applyBatterToOver=cbBatter?cbBatter.checked:false;
+  const typeEl=document.getElementById('bleType');
+  const newType=typeEl?typeEl.value:null;
+
+  pushUndo();
+  updateInn(inn=>{
+    const dLive=inn.deliveries[idx];
+    if(!dLive)return inn;
+    dLive.runs=newRuns;
+    dLive.batter=newBatter;
+    dLive.bowler=newBowler;
+    if(!dLive.isWicket&&newType!==null){
+      if(newType==='Normal'){
+        dLive.isExtra=false;
+        delete dLive.extraType;
+        dLive.event=String(newRuns);
+      }else{
+        dLive.isExtra=true;
+        dLive.extraType=newType;
+        dLive.event=newType+(newRuns>1?' '+newRuns:'');
+      }
+    }
+    if(applyBowlerToOver){
+      const overNum=dLive.over||0;
+      inn.deliveries.forEach(dd=>{if((dd.over||0)===overNum)dd.bowler=newBowler;});
+    }
+    if(applyBatterToOver){
+      const overNum=dLive.over||0;
+      inn.deliveries.forEach((dd,i)=>{if(i>=idx&&(dd.over||0)===overNum)dd.batter=newBatter;});
+    }
+    recomputeInningsFromDeliveries(inn,getRules(),getBpo());
+    return inn;
+  });
+  persist();
+  if(typeof syncMatchToFirestore==='function')syncMatchToFirestore(false);
+  closeModal();
+  toast('Ball updated','ok');
+}
+window.saveBallLogEdit=saveBallLogEdit;
+
 function isInningsOver(){
   const inn=getInn();if(!inn)return false;
   const bp=state.currentInnings===0?state.match.playersA:state.match.playersB;
@@ -2129,6 +2348,7 @@ function render(){
   else if(s==='admin_users')html=renderAdminUsers();
   else if(s==='help')html=renderHelp();
   else if(s==='laws')html=renderLaws();
+  else if(s==='ball_log')html=renderBallLog();
   else if(s==='match_history')html=renderMatchHistory();
   else if(s==='seasons')html=renderSeasons();
   else if(s==='season_detail')html=renderSeasonDetail();
@@ -3614,6 +3834,7 @@ function renderScoring(){
       <span style="font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;color:var(--grass3);">${escHtml(batTeam)} vs ${escHtml(bowlTeam)}</span>
       <div class="topbar-actions">
         ${!locked&&_undoStack.length>0?`<button class="tbtn dark" onclick="undoLastBall()" title="Undo last ball" style="color:#f87171;">↩</button>`:''}
+        ${inn&&inn.deliveries.length>0?`<button class="tbtn dark" onclick="state.screen='ball_log';render()" title="Ball log / fix past balls">📜</button>`:''}
         ${!locked?`<button class="tbtn dark" onclick="openTransferModal()" title="Transfer scoring">🔄</button>`:''}
         <button class="tbtn dark" onclick="openShareModal()">📡</button>
         <button class="tbtn dark" onclick="toggleScorecard()">${showScorecard?'▶':'📋'}</button>
@@ -3662,6 +3883,7 @@ function renderModal(modal){
   else if(modal.type==='bestXI')inner=`<div class="modal-sheet"><div class="modal-handle"></div><div class="modal-title">⭐ Best XI</div><div class="modal-sub">Based on recent form, skills & balance</div><div style="max-height:400px;overflow-y:auto;">${modal.data?.html||''}</div><button class="modal-cancel" onclick="closeModal()">Close</button></div>`;
   else if(modal.type==='matchReport')inner=`<div class="modal-sheet"><div class="modal-handle"></div><div class="modal-title">📋 Match Report</div><div class="modal-sub">Copy and paste into WhatsApp, email, or newsletter</div><textarea style="width:100%;height:200px;padding:10px;border:1px solid var(--home-border);border-radius:9px;font-size:12px;font-family:monospace;color:var(--home-text);resize:vertical;" readonly>${escHtml(modal.data?.text||'')}</textarea><button class="modal-cancel" onclick="closeModal()">Close</button></div>`;
   else if(modal.type==='uploadPreview')inner=renderUploadPreviewModal();
+  else if(modal.type==='ballEdit')inner=renderBallEditModal(modal.data);
   const noClose=modal.type==='newbatter'||modal.type==='nextbowler';
   return `<div class="modal-overlay" onclick="if(event.target===this&&!${noClose})closeModal()">${inner}</div>`;
 }
