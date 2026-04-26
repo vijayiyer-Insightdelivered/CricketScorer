@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.2.0';
+const APP_VERSION='2.2.1';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -1764,7 +1764,7 @@ window.addTeamPlayer=addTeamPlayer;
 
 // ─── Squad Picker Filter ──────────────────────────────────────────────────────
 let teamPickerFilter={search:'',skills:[],region:'',group:''};
-function updatePickerSearch(v){teamPickerFilter.search=v;render();}
+function updatePickerSearch(v){teamPickerFilter.search=v;} // no render — keeps input focus while typing; render fires on submit (Enter or Search button)
 window.updatePickerSearch=updatePickerSearch;
 function togglePickerSkill(key){
   const i=teamPickerFilter.skills.indexOf(key);
@@ -3210,9 +3210,12 @@ function renderSetupSquadPicker(side){
 
   return `<div style="background:#fff;border:1.5px solid var(--home-border);border-radius:13px;padding:12px;margin-top:14px;color:var(--home-text);">
     <div style="font-family:var(--fd);font-size:12px;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">🏅 Pick from Master Squad</div>
-    <input type="search" placeholder="🔍 Search players..." value="${escHtml(f.search)}"
-      oninput="updatePickerSearch(this.value)"
-      style="width:100%;padding:9px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);color:var(--home-text);background:#f8fafc;margin-bottom:8px;"/>
+    <form onsubmit="event.preventDefault();render()" style="display:flex;gap:6px;margin-bottom:8px;">
+      <input type="search" placeholder="🔍 Search players (press Enter)..." value="${escHtml(f.search)}"
+        oninput="updatePickerSearch(this.value)"
+        style="flex:1;padding:9px 12px;border:1.5px solid var(--home-border);border-radius:9px;font-size:13px;font-family:var(--fb);color:var(--home-text);background:#f8fafc;"/>
+      <button type="submit" style="background:linear-gradient(135deg,var(--grass),var(--grass2));border:none;border-radius:9px;color:#fff;padding:0 14px;cursor:pointer;font-family:var(--fu);font-size:11px;font-weight:700;letter-spacing:.5px;">SEARCH</button>
+    </form>
     <div style="display:flex;gap:6px;margin-bottom:8px;">
       <select onchange="setPickerRegion(this.value)" style="flex:1;padding:7px 8px;border:1.5px solid var(--home-border);border-radius:9px;font-size:11px;font-family:var(--fu);background:#f8fafc;color:var(--home-text);">
         <option value="">All Regions</option>
