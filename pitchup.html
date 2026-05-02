@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.3';
+const APP_VERSION='2.3.4';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -1341,8 +1341,24 @@ function loadState(){
     state.attendance=d.attendance||[];
   }catch(e){}
 }
-function persist(){
+// persist() is called after every scoring action. Each call serialises the
+// full saved-state tree (matches + teams + squads + seasons + goals + attendance)
+// and writes it synchronously to localStorage on the main thread. For a busy
+// scorer that's 6+ writes per over → debounce with a 500 ms trailing window,
+// coalescing rapid bursts into a single write. flushPersist() is called on
+// any "app may be going away" event so the latest state is never lost.
+let _persistTimer=null;
+const PERSIST_DEBOUNCE_MS=500;
+function _persistImmediate(){
   try{ localStorage.setItem(STORAGE_KEY,JSON.stringify({matches:state.savedMatches,teams:state.teams,squads:state.squads,seasons:state.seasons,playerGoals:state.playerGoals,attendance:state.attendance})); }catch(e){}
+}
+function persist(){
+  if(_persistTimer!==null)return; // a write is already scheduled
+  _persistTimer=setTimeout(()=>{_persistTimer=null;_persistImmediate();},PERSIST_DEBOUNCE_MS);
+}
+function flushPersist(){
+  if(_persistTimer!==null){clearTimeout(_persistTimer);_persistTimer=null;}
+  _persistImmediate();
 }
 
 // ─── State helpers ────────────────────────────────────────────────────────────
@@ -6161,9 +6177,15 @@ function updateSyncBar(){
 }
 window.addEventListener('online',()=>{updateOffline();syncMatchToFirestore(true);});
 window.addEventListener('offline',updateOffline);
+// Final-chance flush of any pending debounced write before the page goes away.
+// pagehide is the most reliable signal on iOS Safari; beforeunload covers desktop refresh/close.
+window.addEventListener('pagehide',flushPersist);
+window.addEventListener('beforeunload',flushPersist);
 // Sync when app goes to background + pause listeners to save battery
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden'){
+    // Flush any pending debounced localStorage write before backgrounding
+    flushPersist();
     // Sync before going to background
     if(state.match&&!state.match.complete&&syncConfig.syncOnBackground){
       syncMatchToFirestore(true);
