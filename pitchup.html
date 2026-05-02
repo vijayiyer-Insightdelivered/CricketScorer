@@ -203,7 +203,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 
 /* scoreboard */
 .scoreboard{background:linear-gradient(145deg,#f0fdf4,#ecfdf5,#f0fdf4);border-radius:18px;padding:18px 20px;margin-bottom:12px;border:1px solid #bbf7d0;position:relative;overflow:hidden;}
-.scoreboard::after{content:'';position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(30,107,60,.04),transparent 70%);}
+.scoreboard::after{content:'';position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(30,107,60,.04),transparent 70%);pointer-events:none;}
 .sb-label{font-family:var(--fu);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--home-muted);margin-bottom:4px;font-weight:600;}
 .sb-score{font-family:var(--fd);font-size:56px;font-weight:700;line-height:1;color:var(--home-text);}
 .sb-score .wkts{font-size:26px;color:var(--grass);margin-left:2px;}
@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.5';
+const APP_VERSION='2.3.6';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
