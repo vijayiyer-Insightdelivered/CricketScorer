@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.8';
+const APP_VERSION='2.3.9';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -1531,8 +1531,36 @@ function exportCSV(match){
 window.exportCSV=exportCSV;
 
 // ─── Scoring actions ──────────────────────────────────────────────────────────
+// Guard: if we are starting a new over in standard mode with the previous over's
+// bowler still in slot 0, force the next-bowler prompt before recording the ball.
+// Catches cases where the prompt was dismissed or never reached the user (Law 17 —
+// no bowler may bowl two consecutive overs).
+function _enforceBowlerChangeAtOverStart(){
+  const inn=getInn();
+  if(!inn||isCharlie())return false;
+  if(inn.legalBalls===0||inn.legalBalls%getBpo()!==0)return false;
+  if(isInningsOver())return false;
+  // Find the bowler of the previous legal delivery (the one that just ended the over)
+  let prevBowlerName=null;
+  for(let i=inn.deliveries.length-1;i>=0;i--){
+    const d=inn.deliveries[i];
+    if(d.isExtra && d.extraType && (d.extraType==='Wide'||d.extraType==='No Ball')){
+      // wides/no-balls may or may not have been legal depending on rules; fall back to checking bowler
+    }
+    if(d.bowler){prevBowlerName=d.bowler;break;}
+  }
+  const active=inn.bowlers.find(b=>b.id===inn.charlieBowlers[0]);
+  if(active && prevBowlerName && active.name===prevBowlerName){
+    toast('Pick the next bowler — Law 17: no two consecutive overs','warn');
+    openModal('nextbowler',{});
+    return true; // caller should bail
+  }
+  return false;
+}
+
 function scoreRuns(runs){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  if(_enforceBowlerChangeAtOverStart())return;
   pushUndo();
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   let retiredName=null;
@@ -1582,6 +1610,7 @@ function scoreExtra(type,extraRunsOverride){
   if(extraRunsOverride===undefined){
     openModal('byeRuns',{type});return;
   }
+  if(_enforceBowlerChangeAtOverStart())return;
   pushUndo();
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
@@ -1614,6 +1643,7 @@ window.scoreExtra=scoreExtra;
 
 function scoreWicket(outId,type,runs,fielder){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  if(_enforceBowlerChangeAtOverStart())return;
   pushUndo();
   const bpo=getBpo(),charlie=isCharlie();
   updateInn(inn=>{
@@ -4506,8 +4536,9 @@ function renderNextBowlerModal(){
           <span class="mitem-meta" style="color:#fb923c;">was: ${escHtml(b.reason||'retired')}</span>
         </div>`;
       }).join('')}</div>`:''}
-      <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="confirmNextBowler()" ${sel0?'':'disabled style="opacity:.4;width:100%;margin-top:10px;"'}>${sel0?'Confirm':'Select a bowler'}</button>
-      <button class="modal-cancel" onclick="skipNextBowler()">Keep Current</button>`;
+      <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="confirmNextBowler()" ${sel0?'':'disabled style="opacity:.4;width:100%;margin-top:10px;"'}>${sel0?'Confirm':'Select a bowler'}</button>`;
+    // No "Keep Current" in standard mode — Cricket Law 17 forbids the same bowler bowling
+    // two consecutive overs, so this prompt is mandatory at every over boundary.
   }
 
   return `<div class="modal-sheet"><div class="modal-handle"></div>${content}</div>`;
