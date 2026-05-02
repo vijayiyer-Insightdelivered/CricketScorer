@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.7';
+const APP_VERSION='2.3.8';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -2221,29 +2221,33 @@ function setRetireSlot(s){retireBowlerState.slot=s;render();}
 window.setRetireSlot=setRetireSlot;
 function setRetireReason(r){retireBowlerState.reason=r;render();}
 window.setRetireReason=setRetireReason;
+// Pending retire intent — staged until a replacement is actually picked.
+// Keeps the active bowler slot non-null while the user is choosing a replacement.
+let _pendingRetireBowler={slot:null,displacedId:null,reason:null};
+
 function confirmRetireBowler(){
   const {slot,reason}=retireBowlerState;if(slot===null)return;
-  updateInn(inn=>{
-    const bId=inn.charlieBowlers[slot];
-    const b=inn.bowlers.find(x=>x.id===bId);
-    if(b&&reason!=='By Mistake'){
-      // Mark as retired only for actual reasons (not mistake corrections)
-      b.retiredInjured=true;b.retireReason=reason;
-    }
-    // Clear the slot — replacement modal will follow
-    inn.charlieBowlers[slot]=null;return inn;
-  });
+  const inn=getInn();if(!inn)return;
+  // Stage the intent — DO NOT clear the slot here. The slot stays pointing at the
+  // current bowler so charlieBowlers[0] never goes blank if the user cancels.
+  _pendingRetireBowler={slot,displacedId:inn.charlieBowlers[slot],reason};
   state.modal={type:'replaceBowler',data:{slot}};
   retireBowlerState={slot:null,reason:'By Mistake'};render();
 }
 window.confirmRetireBowler=confirmRetireBowler;
 
 function skipBowlerPick(slot){
-  // Leave the slot empty — coach can assign later via Change Bowler
-  toast('Bowler slot left empty — assign before next ball','warn');
+  // "Pick Later" — abandon the retire intent, leaving the original bowler in place.
+  _pendingRetireBowler={slot:null,displacedId:null,reason:null};
   closeModal();
 }
 window.skipBowlerPick=skipBowlerPick;
+function cancelReplaceBowler(){
+  // Cancel from the replacement modal — same: drop the intent, original bowler stays.
+  _pendingRetireBowler={slot:null,displacedId:null,reason:null};
+  closeModal();
+}
+window.cancelReplaceBowler=cancelReplaceBowler;
 
 function recoverAndSelectBowler(name){
   // Clear retired flag so they appear as available, then select them
@@ -2274,8 +2278,18 @@ function applyReplaceBowler(name,slot){
   updateInn(inn=>{
     let nb=inn.bowlers.find(b=>b.name===name);
     if(!nb){const id=`bx_${Date.now()}`;inn.bowlers.push(initBowler(name,id));nb=inn.bowlers[inn.bowlers.length-1];}
-    inn.charlieBowlers[slot]=nb.id;return inn;
+    // If a retire was staged, apply it now to the displaced bowler — only on real reasons,
+    // not "By Mistake" (which means the user is just correcting data entry).
+    const pending=_pendingRetireBowler;
+    if(pending&&pending.slot===slot&&pending.displacedId&&pending.displacedId!==nb.id&&pending.reason&&pending.reason!=='By Mistake'){
+      const old=inn.bowlers.find(x=>x.id===pending.displacedId);
+      if(old){old.retiredInjured=true;old.retireReason=pending.reason;}
+    }
+    inn.charlieBowlers[slot]=nb.id;
+    return inn;
   });
+  _pendingRetireBowler={slot:null,displacedId:null,reason:null};
+  persist();syncMatchToFirestore(false);
   closeModal();
 }
 window.applyReplaceBowler=applyReplaceBowler;
@@ -4034,7 +4048,17 @@ function renderRetireBowlerModal(){
     : [{slot:0,label:'🟢 Current Bowler',b:actB}];
   let items='';
   slots.forEach(({slot,label,b})=>{
-    if(!b)return;
+    if(!b){
+      // Slot is empty — render a recovery item that jumps straight to the replacement
+      // modal (no retire intent — there's nothing to retire).
+      items+=`<div class="mitem" style="border:1.5px dashed #fb923c;background:#fff7ed;cursor:pointer;" onclick="_pendingRetireBowler={slot:null,displacedId:null,reason:null};state.modal={type:'replaceBowler',data:{slot:${slot}}};render()">
+        <div>
+          <div style="font-size:9px;color:#fb923c;font-family:'Rajdhani',sans-serif;letter-spacing:1px;margin-bottom:2px;">${label}</div>
+          <div class="mitem-name" style="color:#9a3412;">⚠️ Empty — tap to assign bowler</div>
+        </div>
+      </div>`;
+      return;
+    }
     items+=`<div class="mitem ${retireBowlerState.slot===slot?'sel':''}" onclick="setRetireSlot(${slot})">
       <div>
         <div style="font-size:9px;color:var(--home-muted);font-family:'Rajdhani',sans-serif;letter-spacing:1px;margin-bottom:2px;">${label}</div>
@@ -4095,7 +4119,7 @@ function renderReplaceBowlerModal(data){
     ${items}
     ${injuredHtml}
     <button class="modal-cancel" style="margin-bottom:6px;" onclick="skipBowlerPick(${data.slot})">⏭ Pick Later</button>
-    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+    <button class="modal-cancel" onclick="cancelReplaceBowler()">Cancel</button>
   </div>`;
 }
 
