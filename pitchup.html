@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.2';
+const APP_VERSION='2.3.3';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -3734,15 +3734,25 @@ function renderScoring(){
 
       <!-- Partnership tracker -->
       ${(()=>{
-        // Compute current partnership from deliveries since last wicket
+        // Compute current partnership from deliveries since the last partnership break.
+        // A break is either a wicket delivery, OR a delivery whose batter is no longer
+        // one of the two current batters (catches auto-retirements that don't push a
+        // wicket delivery — e.g. retired-at-threshold).
         const dels=inn.deliveries;
-        let lastWktIdx=-1;
-        for(let i=dels.length-1;i>=0;i--){if(dels[i].isWicket){lastWktIdx=i;break;}}
-        const partDels=dels.slice(lastWktIdx+1);
-        const partRuns=partDels.reduce((s,d)=>s+(d.runs||0),0);
-        const partBalls=partDels.filter(d=>!d.isExtra||(d.extraType!=='Wide'&&d.extraType!=='No Ball')).length;
         const bat0=inn.currentBatters[0]?inn.batters.find(b=>b.id===inn.currentBatters[0]):null;
         const bat1=inn.currentBatters[1]?inn.batters.find(b=>b.id===inn.currentBatters[1]):null;
+        const cb0Name=bat0?.name||null;
+        const cb1Name=bat1?.name||null;
+        let startIdx=0;
+        for(let i=dels.length-1;i>=0;i--){
+          const d=dels[i];
+          if(d.isWicket){startIdx=i+1;break;}
+          if(d.isExtra)continue; // extras have batter='Extra', skip
+          if(d.batter!==cb0Name&&d.batter!==cb1Name){startIdx=i+1;break;}
+        }
+        const partDels=dels.slice(startIdx);
+        const partRuns=partDels.reduce((s,d)=>s+(d.runs||0),0);
+        const partBalls=partDels.filter(d=>!d.isExtra||(d.extraType!=='Wide'&&d.extraType!=='No Ball')).length;
         // Count per-batter runs in partnership
         let bat0Part=0,bat1Part=0;
         partDels.forEach(d=>{
