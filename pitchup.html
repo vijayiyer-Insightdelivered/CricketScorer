@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.6';
+const APP_VERSION='2.3.7';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -2176,14 +2176,25 @@ window.updateWFS=updateWFS;
 function adjustTarget(){
   if(!state.match||state.currentInnings!==1)return;
   const current=state.match.targetAdjustment||0;
-  promptModal('Adjust target by how many runs?\n\nPositive = increase target (harder to chase)\nNegative = decrease target (easier to chase)\nCurrent adjustment: '+(current>=0?'+':'')+current,String(current),'Adjust Target').then(val=>{
+  const baseTarget=state.match.innings[0]?state.match.innings[0].total+1:0;
+  const currentTarget=baseTarget+current;
+  promptModal(
+    'Add an adjustment to the target — applied on top of any earlier adjustments.\n\n'+
+    'Positive = harder (raise target)\n'+
+    'Negative = easier (lower target)\n\n'+
+    'Current target: '+currentTarget+'\n'+
+    'Total adjustment so far: '+(current>=0?'+':'')+current,
+    '0',
+    'Adjust Target'
+  ).then(val=>{
     if(val===null)return;
-    const adj=parseInt(val);
-    if(isNaN(adj)){toast('Enter a number','error');return;}
-    state.match.targetAdjustment=adj;
+    const delta=parseInt(val);
+    if(isNaN(delta)){toast('Enter a number','error');return;}
+    if(delta===0)return;
+    const newAdj=current+delta;
+    state.match.targetAdjustment=newAdj;
     persist();syncMatchToFirestore(true);
-    const baseTarget=state.match.innings[0]?state.match.innings[0].total+1:0;
-    toast('Target now '+(baseTarget+adj)+(adj!==0?' ('+(adj>0?'+':'')+adj+' adjustment)':''),'success');
+    toast('Adjusted by '+(delta>0?'+':'')+delta+' → target now '+(baseTarget+newAdj),'success');
     render();
   });
 }
