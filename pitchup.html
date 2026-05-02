@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.0';
+const APP_VERSION='2.3.1';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -2106,6 +2106,7 @@ let innSetup={op1:0,op2:1,bw1:0,bw2:1};
 
 function startInnings(){
   const m=state.match,idx=state.currentInnings;
+  const charlie=(m.bowlingMode||'charlie')==='charlie';
   const batP=idx===0?m.playersA:m.playersB;
   const bowlP=idx===0?m.playersB:m.playersA;
   // Validate: must have at least 2 batters and opener selection must differ
