@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.9';
+const APP_VERSION='2.3.10';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -1560,6 +1560,7 @@ function _enforceBowlerChangeAtOverStart(){
 
 function scoreRuns(runs){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  if(isInningsOver()){toast('Innings already over — no further balls','warn');return;}
   if(_enforceBowlerChangeAtOverStart())return;
   pushUndo();
   const rules=getRules(),bpo=getBpo(),charlie=isCharlie();
@@ -1606,6 +1607,7 @@ window.scoreRuns=scoreRuns;
 
 function scoreExtra(type,extraRunsOverride){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  if(isInningsOver()){toast('Innings already over — no further balls','warn');return;}
   // For all extras, if no runs specified, open picker modal
   if(extraRunsOverride===undefined){
     openModal('byeRuns',{type});return;
@@ -1643,6 +1645,7 @@ window.scoreExtra=scoreExtra;
 
 function scoreWicket(outId,type,runs,fielder){
   if(!canScore()){toast('Match is locked by '+lockOwnerName()+'. You cannot score.','error');return;}
+  if(isInningsOver()){toast('Innings already over — no further balls','warn');return;}
   if(_enforceBowlerChangeAtOverStart())return;
   pushUndo();
   const bpo=getBpo(),charlie=isCharlie();
