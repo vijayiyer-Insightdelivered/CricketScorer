@@ -423,7 +423,7 @@ body{font-family:var(--fb);-webkit-text-size-adjust:100%;text-size-adjust:100%;p
 'use strict';
 // ─── Constants ────────────────────────────────────────────────────────────────
 // App + data schema version — bumped each deploy, used to detect updates
-const APP_VERSION='2.3.1';
+const APP_VERSION='2.3.2';
 const SCHEMA_VERSION=1;
 
 // ─── Schema version detection ────────────────────────────────────────────────
@@ -2789,13 +2789,29 @@ function resumeActiveMatch(matchId){
   const m=(state.activeMatches||[]).find(x=>x.matchId===matchId);
   if(!m){toast('Match not found','error');return;}
   state.match=m;
-  state.currentInnings=m.innings&&m.innings[1]?(m.innings[1].complete?1:1):0;
-  state.screen='scoring';
+  state.currentInnings=m.innings&&m.innings[1]?1:0;
+  // If the chosen innings hasn't been set up (no batters yet), send user to innings_setup
+  // — handles the case where the previous startInnings call failed and left an empty innings array.
+  const inn=m.innings&&m.innings[state.currentInnings];
+  if(!inn||!inn.batters||inn.batters.length===0){
+    innSetup={op1:0,op2:1,bw1:0,bw2:1};
+    state.screen='innings_setup';
+  }else{
+    state.screen='scoring';
+  }
   resetSyncCounters();
   render();
   // Refresh from Firestore in background to get latest state
   if(db)db.collection('matches').doc(matchId).get().then(doc=>{
-    if(doc.exists){state.match=doc.data();render();}
+    if(doc.exists){
+      state.match=doc.data();
+      // Re-evaluate target screen with fresh data in case Firestore had progress we didn't
+      const innF=state.match.innings&&state.match.innings[state.currentInnings];
+      if(innF&&innF.batters&&innF.batters.length>0&&state.screen==='innings_setup'){
+        state.screen='scoring';
+      }
+      render();
+    }
   }).catch(()=>{});
 }
 window.resumeActiveMatch=resumeActiveMatch;
@@ -3596,6 +3612,12 @@ function renderScorecard(inn,teamName,bpo){
 
 function renderScoring(){
   const m=state.match,inn=getInn(),bpo=getBpo(),rules=getRules();
+  // Safety net: if the current innings hasn't been set up yet, redirect to innings_setup
+  // instead of crashing on inn.currentBatters / inn.batters below.
+  if(!inn||!inn.batters||inn.batters.length===0){
+    state.screen='innings_setup';
+    return renderInningsSetup();
+  }
   const charlie=(m.bowlingMode||'charlie')==='charlie';
   const batTeam=state.currentInnings===0?m.teamA:m.teamB;
   const bowlTeam=state.currentInnings===0?m.teamB:m.teamA;
